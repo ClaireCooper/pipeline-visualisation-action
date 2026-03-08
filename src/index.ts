@@ -1,0 +1,71 @@
+import * as core from "@actions/core";
+import { DefaultArtifactClient } from "@actions/artifact";
+import { Octokit } from "@octokit/rest";
+import * as os from "os";
+import * as path from "path";
+import * as fs from "fs";
+import {
+  fetchRunDetails,
+  fetchWorkflowPath,
+  fetchWorkflowFile,
+  fetchJobs,
+} from "./api";
+import { buildVisualizerYaml } from "./transform";
+
+async function run(): Promise<void> {
+  const token = core.getInput("token", { required: true });
+  const runId = parseInt(core.getInput("run-id", { required: true }), 10);
+  const artifactName = core.getInput("artifact-name", { required: true });
+
+  const [owner, repo] = (process.env["GITHUB_REPOSITORY"] ?? "").split("/");
+  if (!owner || !repo) {
+    throw new Error("GITHUB_REPOSITORY environment variable not set");
+  }
+
+  const octokit = new Octokit({ auth: token });
+
+  core.info(`Fetching run details for run ${runId}...`);
+  const { name, headSha, workflowId } = await fetchRunDetails(
+    octokit,
+    owner,
+    repo,
+    runId,
+  );
+
+  core.info(`Fetching workflow path for workflow ${workflowId}...`);
+  const workflowPath = await fetchWorkflowPath(
+    octokit,
+    owner,
+    repo,
+    workflowId,
+  );
+
+  core.info(`Fetching workflow file at ${workflowPath}@${headSha}...`);
+  const workflowYaml = await fetchWorkflowFile(
+    octokit,
+    owner,
+    repo,
+    workflowPath,
+    headSha,
+  );
+
+  core.info(`Fetching job timings...`);
+  const jobs = await fetchJobs(octokit, owner, repo, runId);
+
+  core.info(`Building visualiser YAML...`);
+  const vizYaml = buildVisualizerYaml(name, workflowYaml, jobs);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-viz-"));
+  const outFile = path.join(tmpDir, "pipeline-viz.yaml");
+  fs.writeFileSync(outFile, vizYaml, "utf-8");
+
+  core.info(`Uploading artifact "${artifactName}"...`);
+  const client = new DefaultArtifactClient();
+  await client.uploadArtifact(artifactName, [outFile], tmpDir);
+
+  core.info("Done.");
+}
+
+run().catch((err: Error) => {
+  core.setFailed(err.message);
+});

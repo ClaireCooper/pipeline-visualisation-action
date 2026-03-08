@@ -2,10 +2,11 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
-    "moduleResolution": "node16",
+    "moduleResolution": "node",
     "strict": true,
     "esModuleInterop": true,
-    "noEmit": true
+    "noEmit": true,
+    "skipLibCheck": true
   },
   "include": ["src/**/*"]
 }

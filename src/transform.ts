@@ -1,4 +1,5 @@
 import * as yaml from "js-yaml";
+import type { JobTiming } from "./api";
 
 interface RawJob {
   name?: string;
@@ -11,12 +12,6 @@ interface RawWorkflow {
   jobs?: Record<string, RawJob>;
 }
 
-export interface JobTiming {
-  name: string;
-  started_at: string | null;
-  completed_at: string | null;
-}
-
 function parseNeeds(raw: string | string[] | undefined): string[] {
   if (!raw) return [];
   return Array.isArray(raw) ? raw : [raw];
@@ -24,28 +19,35 @@ function parseNeeds(raw: string | string[] | undefined): string[] {
 
 function durationSeconds(
   started: string | null,
-  completed: string | null
+  completed: string | null,
 ): number | undefined {
   if (!started || !completed) return undefined;
   const diff = Math.round(
-    (new Date(completed).getTime() - new Date(started).getTime()) / 1000
+    (new Date(completed).getTime() - new Date(started).getTime()) / 1000,
   );
   return diff >= 0 ? diff : undefined;
 }
 
-export function buildVisualizerYaml(
+export function buildVisualiserYaml(
   workflowName: string,
   workflowYaml: string,
-  jobs: JobTiming[]
+  jobs: JobTiming[],
 ): string {
   let doc: unknown;
   try {
     doc = yaml.load(workflowYaml);
   } catch (e) {
-    throw new Error(`Failed to parse workflow YAML: ${(e as Error).message}`);
+    throw new Error(`Failed to parse workflow YAML: ${(e as Error).message}`, {
+      cause: e,
+    });
   }
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
-    const kind = doc === null || doc === undefined ? "empty" : Array.isArray(doc) ? "an array" : typeof doc;
+    const kind =
+      doc === null || doc === undefined
+        ? "empty"
+        : Array.isArray(doc)
+          ? "an array"
+          : typeof doc;
     throw new Error(`Workflow YAML must be an object, got ${kind}`);
   }
   const rawJobs = (doc as RawWorkflow).jobs ?? {};
@@ -55,9 +57,10 @@ export function buildVisualizerYaml(
   const outputJobs: Record<string, Record<string, unknown>> = {};
 
   for (const [jobId, rawJob] of Object.entries(rawJobs)) {
-    const job = (rawJob !== null && typeof rawJob === "object" && !Array.isArray(rawJob))
-      ? rawJob as RawJob
-      : {};
+    const job =
+      rawJob !== null && typeof rawJob === "object" && !Array.isArray(rawJob)
+        ? (rawJob as RawJob)
+        : {};
     const entry: Record<string, unknown> = {};
     const lookupName = typeof job.name === "string" ? job.name : jobId;
     const timing = timingByName.get(lookupName);

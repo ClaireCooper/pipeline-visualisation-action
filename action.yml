@@ -1,6 +1,6 @@
 name: Pipeline Visualisation
 description: Uploads a YAML artifact describing the workflow run for pipeline-visualisation
-author: your-org
+author: Claire Cooper
 
 inputs:
   token:

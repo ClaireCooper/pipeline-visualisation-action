@@ -9,7 +9,27 @@ permissions:
   contents: write
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+      - name: Fail if bundle is out of date
+        run: |
+          if ! git diff --quiet dist/; then
+            echo "dist/ is out of date — run npm run build and commit the result"
+            git diff dist/
+            exit 1
+          fi
+
   release:
+    needs: [build]
     permissions:
       contents: write
     uses: George-Ogden/actions/.github/workflows/text-release.yaml@v4.0.1

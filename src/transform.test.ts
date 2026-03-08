@@ -68,12 +68,12 @@ jobs:
     });
   });
 
-  it("omits duration when timing is unavailable", () => {
+  it("excludes jobs with no timing entry", () => {
     const result = buildVisualiserYaml("CI", workflowYaml, []);
     const parsed = yaml.load(result) as Record<string, unknown>;
     const ciJobs = (parsed as { CI: { jobs: Record<string, unknown> } }).CI
       .jobs;
-    expect(ciJobs["build"]).toEqual({});
+    expect(ciJobs).toEqual({});
   });
 
   it("matches timing by explicit job name field when present", () => {
@@ -118,13 +118,24 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlWithNullJob, []);
+    const result = buildVisualiserYaml("CI", yamlWithNullJob, [
+      {
+        name: "build",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:10Z",
+      },
+      {
+        name: "test",
+        started_at: "2024-01-01T00:00:10Z",
+        completed_at: "2024-01-01T00:00:20Z",
+      },
+    ]);
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(parsed).toEqual({
       CI: {
         jobs: {
-          build: {},
-          test: { needs: ["build"] },
+          build: { duration: 10 },
+          test: { duration: 10, needs: ["build"] },
         },
       },
     });
@@ -140,7 +151,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlWithStringNeeds, []);
+    const result = buildVisualiserYaml("CI", yamlWithStringNeeds, [
+      {
+        name: "test",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:10Z",
+      },
+    ]);
     const parsed = yaml.load(result) as Record<string, unknown>;
     const testJob = (parsed as { CI: { jobs: { test: { needs: string[] } } } })
       .CI.jobs.test;
@@ -261,7 +278,13 @@ jobs:
     needs: [build, lint]
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlMultiNeeds, []);
+    const result = buildVisualiserYaml("CI", yamlMultiNeeds, [
+      {
+        name: "test",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:10Z",
+      },
+    ]);
     const parsed = yaml.load(result) as Record<string, unknown>;
     const testJob = (parsed as { CI: { jobs: { test: { needs: string[] } } } })
       .CI.jobs.test;
@@ -299,8 +322,8 @@ jobs:
     ]);
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(
-      (parsed as { CI: { jobs: { build: unknown } } }).CI.jobs.build,
-    ).toEqual({});
+      (parsed as { CI: { jobs: Record<string, unknown> } }).CI.jobs,
+    ).not.toHaveProperty("build");
   });
 
   it("emits duration: 0 for a job that completes in under 500ms", () => {

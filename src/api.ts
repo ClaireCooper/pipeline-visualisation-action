@@ -80,9 +80,11 @@ export async function fetchJobs(
     octokit.rest.actions.listJobsForWorkflowRun,
     { owner, repo, run_id: runId, per_page: 100 },
   );
-  return jobs.map((j) => ({
-    name: j.name,
-    started_at: j.started_at ?? null,
-    completed_at: j.completed_at ?? null,
-  }));
+  return jobs
+    .filter((j) => j.status === "completed")
+    .map((j) => ({
+      name: j.name,
+      started_at: j.started_at ?? null,
+      completed_at: j.completed_at ?? null,
+    }));
 }

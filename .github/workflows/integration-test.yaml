@@ -1,0 +1,84 @@
+name: Integration Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  # Dummy jobs to generate real timing data for the action to visualise
+  job-a:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 2
+
+  job-b:
+    needs: [job-a]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 2
+
+  job-c:
+    needs: [job-a]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 2
+
+  # Run the action itself and upload the artifact
+  run-action:
+    needs: [job-b, job-c]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./
+        with:
+          artifact-name: pipeline-visualisation-integration-test
+
+  # Download the artifact and validate it is well-formed
+  validate:
+    needs: [run-action]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-visualisation-integration-test
+
+      - name: Validate artifact
+        run: |
+          echo "--- pipeline-visualisation.yaml ---"
+          cat pipeline-visualisation.yaml
+          echo "-------------------------"
+          python3 - <<'EOF'
+          import yaml, sys
+
+          with open("pipeline-visualisation.yaml") as f:
+              data = yaml.safe_load(f)
+
+          assert data and isinstance(data, dict), "Expected a non-empty YAML object"
+
+          workflow_name, workflow = next(iter(data.items()))
+          print(f"Workflow: {workflow_name}")
+
+          assert "jobs" in workflow, "Missing 'jobs' key"
+          jobs = workflow["jobs"]
+          print(f"Jobs: {list(jobs.keys())}")
+
+          assert len(jobs) >= 3, f"Expected at least 3 jobs, got {len(jobs)}"
+
+          for job_name, job in jobs.items():
+              assert isinstance(job, dict), f"Job {job_name} is not an object"
+              if "duration" in job:
+                  assert isinstance(job["duration"], int) and job["duration"] >= 0, \
+                      f"Job {job_name} has invalid duration: {job['duration']}"
+              if "needs" in job:
+                  assert isinstance(job["needs"], list), \
+                      f"Job {job_name} needs is not a list"
+
+          print("Validation passed.")
+          EOF

@@ -11,7 +11,7 @@ permissions:
   actions: read
 ```
 
-## Usage: final job (same run)
+## Usage: For a single workflow
 
 Add a job that depends on all other jobs in your workflow:
 
@@ -38,7 +38,7 @@ jobs:
       - uses: ClaireCooper/pipeline-visualisation-action@v1
 ```
 
-## Usage: workflow_run trigger
+## Usage: For many workflows
 
 Create a separate workflow that fires after your target workflow completes.
 This requires no changes to your existing workflow:
@@ -63,16 +63,16 @@ jobs:
 
 ## Inputs
 
-| Input           | Default                | Description                         |
-| --------------- | ---------------------- | ----------------------------------- |
-| `token`         | `${{ github.token }}`  | GitHub token                        |
-| `run-id`        | `${{ github.run_id }}` | ID of the workflow run to visualise |
-| `artifact-name` | `pipeline-viz`         | Name of the uploaded artifact       |
+| Input           | Default                  | Description                         |
+| --------------- | ------------------------ | ----------------------------------- |
+| `token`         | `${{ github.token }}`    | GitHub token                        |
+| `run-id`        | `${{ github.run_id }}`   | ID of the workflow run to visualise |
+| `artifact-name` | `pipeline-visualisation` | Name of the uploaded artifact       |
 
 ## Output
 
-The action uploads a YAML artifact (default name: `pipeline-viz`) containing a
-single file `pipeline-viz.yaml`. Download it from the workflow run's artifact
+The action uploads a YAML artifact (default name: `pipeline-visualisation`) containing a
+single file `pipeline-visualisation.yaml`. Download it from the workflow run's artifact
 list and paste it into the
 [pipeline-visualisation](https://github.com/clairecooper/pipeline-visualisation) editor.
 

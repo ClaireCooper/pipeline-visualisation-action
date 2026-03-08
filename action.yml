@@ -1,5 +1,5 @@
 name: Pipeline Visualisation
-description: Uploads a YAML artifact describing the workflow run for pipeline-visualisation
+description: Uploads a YAML artifact describing the workflow run for viewing in pipeline-visualisation
 author: Claire Cooper
 
 inputs:
@@ -14,7 +14,7 @@ inputs:
   artifact-name:
     description: Name of the uploaded artifact
     required: false
-    default: pipeline-viz
+    default: pipeline-visualisation
 
 runs:
   using: node20

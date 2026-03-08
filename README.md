@@ -73,8 +73,8 @@ jobs:
 
 The action uploads a YAML artifact (default name: `pipeline-visualisation`) containing a
 single file `pipeline-visualisation.yaml`. Download it from the workflow run's artifact
-list and paste it into the
-[pipeline-visualisation](https://github.com/clairecooper/pipeline-visualisation) editor.
+list and upload it to the
+[pipeline-visualisation](https://github.com/clairecooper/pipeline-visualisation) editor to see a dependency graph and Gantt chart for the run.
 
 The YAML format looks like this:
 

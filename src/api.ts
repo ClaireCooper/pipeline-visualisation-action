@@ -1,4 +1,6 @@
-import { Octokit } from "@octokit/rest";
+import type { Octokit } from "@octokit/rest" with {
+  "resolution-mode": "import",
+};
 
 export interface RunDetails {
   name: string;
@@ -16,7 +18,7 @@ export async function fetchRunDetails(
   octokit: Octokit,
   owner: string,
   repo: string,
-  runId: number
+  runId: number,
 ): Promise<RunDetails> {
   const { data } = await octokit.rest.actions.getWorkflowRun({
     owner,
@@ -34,7 +36,7 @@ export async function fetchWorkflowPath(
   octokit: Octokit,
   owner: string,
   repo: string,
-  workflowId: number
+  workflowId: number,
 ): Promise<string> {
   const { data } = await octokit.rest.actions.getWorkflow({
     owner,
@@ -49,16 +51,21 @@ export async function fetchWorkflowFile(
   owner: string,
   repo: string,
   path: string,
-  ref: string
+  ref: string,
 ): Promise<string> {
-  const { data } = await octokit.rest.repos.getContent({ owner, repo, path, ref });
-  if (
-    Array.isArray(data) ||
-    !("content" in data) ||
-    !("encoding" in data) ||
-    data.encoding !== "base64"
-  ) {
+  const { data } = await octokit.rest.repos.getContent({
+    owner,
+    repo,
+    path,
+    ref,
+  });
+  if (Array.isArray(data) || !("content" in data) || !("encoding" in data)) {
     throw new Error(`Unexpected response fetching ${path}`);
+  }
+  if (data.encoding !== "base64") {
+    throw new Error(
+      `Unexpected encoding "${String(data.encoding)}" fetching ${path}`,
+    );
   }
   return Buffer.from(data.content, "base64").toString("utf-8");
 }
@@ -67,11 +74,11 @@ export async function fetchJobs(
   octokit: Octokit,
   owner: string,
   repo: string,
-  runId: number
+  runId: number,
 ): Promise<JobTiming[]> {
   const jobs = await octokit.paginate(
     octokit.rest.actions.listJobsForWorkflowRun,
-    { owner, repo, run_id: runId, per_page: 100 }
+    { owner, repo, run_id: runId, per_page: 100 },
   );
   return jobs.map((j) => ({
     name: j.name,

@@ -1,6 +1,5 @@
 import * as core from "@actions/core";
 import { DefaultArtifactClient } from "@actions/artifact";
-import { Octokit } from "@octokit/rest";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
@@ -15,13 +14,19 @@ import { buildVisualizerYaml } from "./transform";
 async function run(): Promise<void> {
   const token = core.getInput("token", { required: true });
   const runId = parseInt(core.getInput("run-id", { required: true }), 10);
+  if (isNaN(runId)) {
+    throw new Error(
+      `run-id must be a valid integer, got: ${core.getInput("run-id")}`,
+    );
+  }
   const artifactName = core.getInput("artifact-name", { required: true });
 
   const [owner, repo] = (process.env["GITHUB_REPOSITORY"] ?? "").split("/");
   if (!owner || !repo) {
-    throw new Error("GITHUB_REPOSITORY environment variable not set");
+    throw new Error("GITHUB_REPOSITORY must be in owner/repo format");
   }
 
+  const { Octokit } = await import("@octokit/rest");
   const octokit = new Octokit({ auth: token });
 
   core.info(`Fetching run details for run ${runId}...`);
@@ -66,6 +71,6 @@ async function run(): Promise<void> {
   core.info("Done.");
 }
 
-run().catch((err: Error) => {
-  core.setFailed(err.message);
+run().catch((err: unknown) => {
+  core.setFailed(err instanceof Error ? err.message : String(err));
 });

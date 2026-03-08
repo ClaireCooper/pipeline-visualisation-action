@@ -64,9 +64,8 @@ export function buildVisualiserYaml(
     const entry: Record<string, unknown> = {};
     const lookupName = typeof job.name === "string" ? job.name : jobId;
     const timing = timingByName.get(lookupName);
-    const duration = timing
-      ? durationSeconds(timing.started_at, timing.completed_at)
-      : undefined;
+    if (!timing) continue;
+    const duration = durationSeconds(timing.started_at, timing.completed_at);
     if (duration !== undefined) entry["duration"] = duration;
     const needs = parseNeeds(job.needs);
     if (needs.length > 0) entry["needs"] = needs;

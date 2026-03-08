@@ -73,6 +73,7 @@ jobs:
 
           for job_name, job in jobs.items():
               assert isinstance(job, dict), f"Job {job_name} is not an object"
+              assert "duration" in job, f"Job {job_name} missing duration key"
               if "duration" in job:
                   assert isinstance(job["duration"], int) and job["duration"] >= 0, \
                       f"Job {job_name} has invalid duration: {job['duration']}"

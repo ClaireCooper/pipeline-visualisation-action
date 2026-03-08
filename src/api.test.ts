@@ -182,11 +182,13 @@ describe("fetchJobs", () => {
     mockOctokit.paginate.mockResolvedValue([
       {
         name: "build",
+        status: "completed",
         started_at: "2024-01-01T00:00:00Z",
         completed_at: "2024-01-01T00:00:45Z",
       },
       {
         name: "test",
+        status: "completed",
         started_at: "2024-01-01T00:00:45Z",
         completed_at: "2024-01-01T00:02:45Z",
       },
@@ -213,7 +215,12 @@ describe("fetchJobs", () => {
 
   it("maps null started_at and completed_at to null", async () => {
     mockOctokit.paginate.mockResolvedValue([
-      { name: "build", started_at: null, completed_at: null },
+      {
+        name: "build",
+        status: "completed",
+        started_at: null,
+        completed_at: null,
+      },
     ]);
 
     const result = await fetchJobs(mockOctokit as never, "owner", "repo", 99);
@@ -224,12 +231,43 @@ describe("fetchJobs", () => {
 
   it("maps undefined started_at and completed_at to null", async () => {
     mockOctokit.paginate.mockResolvedValue([
-      { name: "build", started_at: undefined, completed_at: undefined },
+      {
+        name: "build",
+        status: "completed",
+        started_at: undefined,
+        completed_at: undefined,
+      },
     ]);
 
     const result = await fetchJobs(mockOctokit as never, "owner", "repo", 99);
     expect(result).toEqual([
       { name: "build", started_at: null, completed_at: null },
+    ]);
+  });
+
+  it("excludes jobs that are not yet completed", async () => {
+    mockOctokit.paginate.mockResolvedValue([
+      {
+        name: "build",
+        status: "completed",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:45Z",
+      },
+      {
+        name: "deploy",
+        status: "in_progress",
+        started_at: "2024-01-01T00:00:45Z",
+        completed_at: null,
+      },
+    ]);
+
+    const result = await fetchJobs(mockOctokit as never, "owner", "repo", 99);
+    expect(result).toEqual([
+      {
+        name: "build",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:45Z",
+      },
     ]);
   });
 });

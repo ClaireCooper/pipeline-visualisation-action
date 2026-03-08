@@ -81380,7 +81380,9 @@ async function fetchWorkflowFile(octokit, owner, repo, path, ref) {
 }
 async function fetchJobs(octokit, owner, repo, runId) {
     const jobs = await octokit.paginate(octokit.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: runId, per_page: 100 });
-    return jobs.map((j) => ({
+    return jobs
+        .filter((j) => j.status === "completed")
+        .map((j) => ({
         name: j.name,
         started_at: j.started_at ?? null,
         completed_at: j.completed_at ?? null,
@@ -81554,9 +81556,9 @@ function buildVisualiserYaml(workflowName, workflowYaml, jobs) {
         const entry = {};
         const lookupName = typeof job.name === "string" ? job.name : jobId;
         const timing = timingByName.get(lookupName);
-        const duration = timing
-            ? durationSeconds(timing.started_at, timing.completed_at)
-            : undefined;
+        if (!timing)
+            continue;
+        const duration = durationSeconds(timing.started_at, timing.completed_at);
         if (duration !== undefined)
             entry["duration"] = duration;
         const needs = parseNeeds(job.needs);

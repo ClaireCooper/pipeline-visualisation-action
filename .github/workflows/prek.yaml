@@ -1,0 +1,16 @@
+name: Run Prek
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  run-prek:
+    uses: George-Ogden/actions/.github/workflows/lint.yaml@v4.0.1

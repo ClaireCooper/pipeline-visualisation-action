@@ -58,11 +58,13 @@ async function run(): Promise<void> {
   const jobs = await fetchJobs(octokit, owner, repo, runId);
 
   core.info(`Building visualiser YAML...`);
-  const vizYaml = buildVisualiserYaml(name, workflowYaml, jobs);
+  const visualisationYaml = buildVisualiserYaml(name, workflowYaml, jobs);
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-viz-"));
-  const outFile = path.join(tmpDir, "pipeline-viz.yaml");
-  fs.writeFileSync(outFile, vizYaml, "utf-8");
+  const tmpDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "pipeline-visualisation-"),
+  );
+  const outFile = path.join(tmpDir, "pipeline-visualisation.yaml");
+  fs.writeFileSync(outFile, visualisationYaml, "utf-8");
 
   core.info(`Uploading artifact "${artifactName}"...`);
   const client = new DefaultArtifactClient();

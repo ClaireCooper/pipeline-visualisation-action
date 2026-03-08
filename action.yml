@@ -1,0 +1,21 @@
+name: Pipeline Visualisation
+description: Uploads a YAML artifact describing the workflow run for pipeline-visualisation
+author: your-org
+
+inputs:
+  token:
+    description: GitHub token
+    required: false
+    default: ${{ github.token }}
+  run-id:
+    description: ID of the workflow run to visualise (defaults to current run)
+    required: false
+    default: ${{ github.run_id }}
+  artifact-name:
+    description: Name of the uploaded artifact
+    required: false
+    default: pipeline-viz
+
+runs:
+  using: node20
+  main: dist/index.js

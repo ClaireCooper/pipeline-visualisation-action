@@ -1,7 +1,7 @@
 # pipeline-visualisation-action
 
 Uploads a YAML artifact describing your GitHub Actions workflow run,
-for use with [pipeline-visualisation](https://github.com/your-org/pipeline-visualisation).
+for use with [pipeline-visualisation](https://clairecooper.github.io/pipeline-visualisation/).
 
 ## Required permissions
 
@@ -35,7 +35,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: your-org/pipeline-visualisation-action@v1
+      - uses: ClaireCooper/pipeline-visualisation-action@v1
 ```
 
 ## Usage: workflow_run trigger
@@ -56,7 +56,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: your-org/pipeline-visualisation-action@v1
+      - uses: ClaireCooper/pipeline-visualisation-action@v1
         with:
           run-id: ${{ github.event.workflow_run.id }}
 ```
@@ -74,7 +74,7 @@ jobs:
 The action uploads a YAML artifact (default name: `pipeline-viz`) containing a
 single file `pipeline-viz.yaml`. Download it from the workflow run's artifact
 list and paste it into the
-[pipeline-visualisation](https://github.com/your-org/pipeline-visualisation) editor.
+[pipeline-visualisation](https://github.com/clairecooper/pipeline-visualisation) editor.
 
 The YAML format looks like this:
 

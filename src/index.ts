@@ -9,7 +9,7 @@ import {
   fetchWorkflowFile,
   fetchJobs,
 } from "./api";
-import { buildVisualizerYaml } from "./transform";
+import { buildVisualiserYaml } from "./transform";
 
 async function run(): Promise<void> {
   const token = core.getInput("token", { required: true });
@@ -58,7 +58,7 @@ async function run(): Promise<void> {
   const jobs = await fetchJobs(octokit, owner, repo, runId);
 
   core.info(`Building visualiser YAML...`);
-  const vizYaml = buildVisualizerYaml(name, workflowYaml, jobs);
+  const vizYaml = buildVisualiserYaml(name, workflowYaml, jobs);
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-viz-"));
   const outFile = path.join(tmpDir, "pipeline-viz.yaml");

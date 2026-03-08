@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchRunDetails, fetchWorkflowPath, fetchWorkflowFile, fetchJobs } from "./api";
+import {
+  fetchRunDetails,
+  fetchWorkflowPath,
+  fetchWorkflowFile,
+  fetchJobs,
+} from "./api";
 
 const mockOctokit = {
   rest: {
@@ -31,7 +36,7 @@ describe("fetchRunDetails", () => {
       mockOctokit as never,
       "owner",
       "repo",
-      99
+      99,
     );
     expect(result).toEqual({ name: "CI", headSha: "abc123", workflowId: 42 });
     expect(mockOctokit.rest.actions.getWorkflowRun).toHaveBeenCalledWith({
@@ -50,7 +55,12 @@ describe("fetchRunDetails", () => {
       },
     });
 
-    const result = await fetchRunDetails(mockOctokit as never, "owner", "repo", 99);
+    const result = await fetchRunDetails(
+      mockOctokit as never,
+      "owner",
+      "repo",
+      99,
+    );
     expect(result.name).toBe("");
   });
 });
@@ -61,7 +71,12 @@ describe("fetchWorkflowPath", () => {
       data: { path: ".github/workflows/ci.yaml" },
     });
 
-    const result = await fetchWorkflowPath(mockOctokit as never, "owner", "repo", 42);
+    const result = await fetchWorkflowPath(
+      mockOctokit as never,
+      "owner",
+      "repo",
+      42,
+    );
     expect(result).toBe(".github/workflows/ci.yaml");
     expect(mockOctokit.rest.actions.getWorkflow).toHaveBeenCalledWith({
       owner: "owner",
@@ -83,7 +98,7 @@ describe("fetchWorkflowFile", () => {
       "owner",
       "repo",
       ".github/workflows/ci.yaml",
-      "abc123"
+      "abc123",
     );
     expect(result).toBe("name: CI\njobs: {}\n");
     expect(mockOctokit.rest.repos.getContent).toHaveBeenCalledWith({
@@ -100,7 +115,13 @@ describe("fetchWorkflowFile", () => {
     });
 
     await expect(
-      fetchWorkflowFile(mockOctokit as never, "owner", "repo", ".github/workflows/ci.yaml", "abc123")
+      fetchWorkflowFile(
+        mockOctokit as never,
+        "owner",
+        "repo",
+        ".github/workflows/ci.yaml",
+        "abc123",
+      ),
     ).rejects.toThrow("Unexpected response fetching");
   });
 
@@ -110,8 +131,14 @@ describe("fetchWorkflowFile", () => {
     });
 
     await expect(
-      fetchWorkflowFile(mockOctokit as never, "owner", "repo", ".github/workflows/ci.yaml", "abc123")
-    ).rejects.toThrow("Unexpected response fetching");
+      fetchWorkflowFile(
+        mockOctokit as never,
+        "owner",
+        "repo",
+        ".github/workflows/ci.yaml",
+        "abc123",
+      ),
+    ).rejects.toThrow('Unexpected encoding "utf-8" fetching');
   });
 
   it("throws when response object has content but no encoding field", async () => {
@@ -120,17 +147,32 @@ describe("fetchWorkflowFile", () => {
     });
 
     await expect(
-      fetchWorkflowFile(mockOctokit as never, "owner", "repo", ".github/workflows/ci.yaml", "abc123")
+      fetchWorkflowFile(
+        mockOctokit as never,
+        "owner",
+        "repo",
+        ".github/workflows/ci.yaml",
+        "abc123",
+      ),
     ).rejects.toThrow("Unexpected response fetching");
   });
 
   it("throws when response object has no content field (e.g. submodule)", async () => {
     mockOctokit.rest.repos.getContent.mockResolvedValue({
-      data: { type: "submodule", submodule_git_url: "https://github.com/example/repo" },
+      data: {
+        type: "submodule",
+        submodule_git_url: "https://github.com/example/repo",
+      },
     });
 
     await expect(
-      fetchWorkflowFile(mockOctokit as never, "owner", "repo", ".github/workflows/ci.yaml", "abc123")
+      fetchWorkflowFile(
+        mockOctokit as never,
+        "owner",
+        "repo",
+        ".github/workflows/ci.yaml",
+        "abc123",
+      ),
     ).rejects.toThrow("Unexpected response fetching");
   });
 });
@@ -152,12 +194,20 @@ describe("fetchJobs", () => {
 
     const result = await fetchJobs(mockOctokit as never, "owner", "repo", 99);
     expect(result).toEqual([
-      { name: "build", started_at: "2024-01-01T00:00:00Z", completed_at: "2024-01-01T00:00:45Z" },
-      { name: "test", started_at: "2024-01-01T00:00:45Z", completed_at: "2024-01-01T00:02:45Z" },
+      {
+        name: "build",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:45Z",
+      },
+      {
+        name: "test",
+        started_at: "2024-01-01T00:00:45Z",
+        completed_at: "2024-01-01T00:02:45Z",
+      },
     ]);
     expect(mockOctokit.paginate).toHaveBeenCalledWith(
       mockOctokit.rest.actions.listJobsForWorkflowRun,
-      { owner: "owner", repo: "repo", run_id: 99, per_page: 100 }
+      { owner: "owner", repo: "repo", run_id: 99, per_page: 100 },
     );
   });
 

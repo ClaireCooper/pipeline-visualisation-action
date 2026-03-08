@@ -10,8 +10,11 @@ repos:
     rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
+        exclude: ^dist/
       - id: mixed-line-ending
+        exclude: ^dist/
       - id: trailing-whitespace
+        exclude: ^dist/
 
   - repo: https://github.com/koalaman/shellcheck-precommit/
     rev: v0.11.0
@@ -23,6 +26,7 @@ repos:
     rev: v4.0.0-alpha.8
     hooks:
       - id: prettier
+        exclude: ^dist/
 
   - repo: https://github.com/pre-commit/mirrors-eslint.git
     rev: v10.0.2
@@ -44,7 +48,7 @@ repos:
     rev: v2.4.1
     hooks:
       - id: codespell
-        exclude: package-lock\.json
+        exclude: (^dist/|package-lock\.json)
 
   - repo: https://github.com/George-Ogden/pre-commit-hooks/
     rev: v2.4.0
@@ -54,7 +58,8 @@ repos:
         exclude: (?x)^(
           .pre-commit-config.yaml|
           .gitignore|
-          CLAUDE.md
+          CLAUDE.md|
+          dist/.*
           )$
       - id: spell-check-commit-msgs
       - id: version-txt-auto-msg

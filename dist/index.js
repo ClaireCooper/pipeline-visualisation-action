@@ -29874,8 +29874,6 @@ async function fetchJobs(octokit, owner, repo, runId) {
 }
 async function fetchAllWorkflowNodes(octokit, owner, repo, mainWorkflowName, mainWorkflowPath, headSha) {
     const seenNames = new Set();
-    // Track visited paths as "owner/repo/path@ref" to prevent cycles
-    const visited = new Set();
     const queue = [
         {
             owner,
@@ -29884,7 +29882,7 @@ async function fetchAllWorkflowNodes(octokit, owner, repo, mainWorkflowName, mai
             ref: headSha,
             rawName: mainWorkflowName,
             jobPrefix: "",
-            parentUsesValue: undefined,
+            ancestors: [],
         },
     ];
     const nodes = [];
@@ -29893,9 +29891,8 @@ async function fetchAllWorkflowNodes(octokit, owner, repo, mainWorkflowName, mai
         if (!entry)
             break;
         const key = `${entry.owner}/${entry.repo}/${entry.path}@${entry.ref}`;
-        if (visited.has(key))
+        if (entry.ancestors.includes(key))
             continue;
-        visited.add(key);
         let workflowYaml;
         try {
             workflowYaml = await fetchWorkflowFile(octokit, entry.owner, entry.repo, entry.path, entry.ref);
@@ -29928,7 +29925,6 @@ async function fetchAllWorkflowNodes(octokit, owner, repo, mainWorkflowName, mai
             name,
             yaml: workflowYaml,
             jobPrefix: entry.jobPrefix,
-            parentUsesValue: entry.parentUsesValue,
         });
         // Discover child uses references
         if (doc) {
@@ -29951,14 +29947,18 @@ async function fetchAllWorkflowNodes(octokit, owner, repo, mainWorkflowName, mai
                         // Derive a fallback name from the filename
                         const filename = ref.path.split("/").pop() ?? ref.path;
                         const fallbackName = filename.replace(/\.[^.]+$/, "");
+                        // Use the job's display name (name: field if present, else job ID) to
+                        // build the child prefix, matching how GitHub names child jobs in the API.
+                        const job = rawJob;
+                        const jobDisplayName = typeof job["name"] === "string" ? job["name"] : jobId;
                         queue.push({
                             owner: ref.owner,
                             repo: ref.repo,
                             path: ref.path,
                             ref: ref.ref,
                             rawName: fallbackName,
-                            jobPrefix: `${entry.jobPrefix}${jobId} / `,
-                            parentUsesValue: usesValue,
+                            jobPrefix: `${entry.jobPrefix}${jobDisplayName} / `,
+                            ancestors: [...entry.ancestors, key],
                         });
                     }
                 }
@@ -30047,7 +30047,7 @@ async function run() {
     core.info(`Uploading artifact...`);
     const { DefaultArtifactClient } = await __nccwpck_require__.e(/* import() */ 52).then(__nccwpck_require__.bind(__nccwpck_require__, 52052));
     const client = new DefaultArtifactClient();
-    await client.uploadArtifact("pipeline-visualisation", [outFile], tmpDir, {
+    await client.uploadArtifact("pipeline-visualisation.yaml", [outFile], tmpDir, {
         skipArchive: true,
     });
     core.info("Done.");
@@ -30140,14 +30140,116 @@ function durationSeconds(started, completed) {
     const diff = Math.round((new Date(completed).getTime() - new Date(started).getTime()) / 1000);
     return diff >= 0 ? diff : undefined;
 }
+// Given a base string like "deploy (", find all matrix variant suffixes present in
+// timing data — e.g. ["staging", "prod"] if timing has "deploy (staging) / ..." etc.
+function findVariantSuffixes(base, jobs) {
+    const seen = new Set();
+    for (const job of jobs) {
+        if (!job.name.startsWith(base))
+            continue;
+        const rest = job.name.slice(base.length);
+        const closeIdx = rest.indexOf(")");
+        if (closeIdx >= 0 && rest.slice(closeIdx + 1, closeIdx + 4) === " / ") {
+            seen.add(rest.slice(0, closeIdx));
+        }
+    }
+    return [...seen];
+}
+// Given a child workflow node's jobPrefix (e.g. "deploy / "), find matrix variant
+// suffixes from the timing data — e.g. ["staging", "prod"].
+function matrixVariants(jobPrefix, jobs) {
+    if (!jobPrefix)
+        return [];
+    const parts = jobPrefix.split(" / ");
+    parts.pop(); // trailing ""
+    const lastSegment = parts[parts.length - 1];
+    const parentPart = parts.slice(0, -1).join(" / ");
+    const prefix = parentPart ? `${parentPart} / ` : "";
+    return findVariantSuffixes(`${prefix}${lastSegment} (`, jobs);
+}
+// Substitute the last segment of a jobPrefix with a matrix variant suffix.
+// e.g. ("deploy / ", "staging") → "deploy (staging) / "
+function withVariant(jobPrefix, variant) {
+    const parts = jobPrefix.split(" / ");
+    parts.pop(); // trailing ""
+    const lastSegment = parts.pop() ?? "";
+    const parentPart = parts.length > 0 ? parts.join(" / ") + " / " : "";
+    return `${parentPart}${lastSegment} (${variant}) / `;
+}
+function processJobs(rawJobs, jobPrefix, jobs, timingByName, nodeByJobPrefix) {
+    const outputJobs = {};
+    for (const [jobId, rawJob] of Object.entries(rawJobs)) {
+        const job = rawJob !== null && typeof rawJob === "object" && !Array.isArray(rawJob)
+            ? rawJob
+            : {};
+        const entry = {};
+        if (typeof job.uses === "string") {
+            // Reusable workflow job — emit uses: <name>, no duration
+            const jobDisplayName = typeof job.name === "string" ? job.name : jobId;
+            const childPrefix = `${jobPrefix}${jobDisplayName} / `;
+            const childName = nodeByJobPrefix.get(childPrefix);
+            if (childName === undefined)
+                continue;
+            const variantBase = `${jobPrefix}${jobDisplayName} (`;
+            const variants = findVariantSuffixes(variantBase, jobs);
+            const needs = parseNeeds(job.needs);
+            if (variants.length > 0) {
+                // Matrix reusable workflow — emit each variant as a separate entry
+                for (const variant of variants) {
+                    const variantEntry = {
+                        uses: `${childName} (${variant})`,
+                    };
+                    if (needs.length > 0)
+                        variantEntry["needs"] = needs;
+                    outputJobs[`${jobDisplayName} (${variant})`] = variantEntry;
+                }
+            }
+            else {
+                entry["uses"] = childName;
+                if (needs.length > 0)
+                    entry["needs"] = needs;
+                outputJobs[jobId] = entry;
+            }
+        }
+        else {
+            // Regular job — look up timing
+            const lookupName = typeof job.name === "string" ? job.name : jobId;
+            const prefixedName = `${jobPrefix}${lookupName}`;
+            const timing = timingByName.get(prefixedName);
+            if (timing) {
+                const duration = durationSeconds(timing.started_at, timing.completed_at);
+                if (duration !== undefined)
+                    entry["duration"] = duration;
+                const needs = parseNeeds(job.needs);
+                if (needs.length > 0)
+                    entry["needs"] = needs;
+                outputJobs[jobId] = entry;
+            }
+            else {
+                // Matrix job — emit each variant (e.g. "test (18)", "test (20)") as a
+                // separate job, inheriting needs from the parent job definition
+                const matrixPrefix = `${prefixedName} (`;
+                const needs = parseNeeds(job.needs);
+                for (const variant of jobs.filter((j) => j.name.startsWith(matrixPrefix))) {
+                    const variantEntry = {};
+                    const duration = durationSeconds(variant.started_at, variant.completed_at);
+                    if (duration !== undefined)
+                        variantEntry["duration"] = duration;
+                    if (needs.length > 0)
+                        variantEntry["needs"] = needs;
+                    outputJobs[variant.name.slice(jobPrefix.length)] = variantEntry;
+                }
+            }
+        }
+    }
+    return outputJobs;
+}
 function buildVisualiserYaml(workflows, jobs) {
     const timingByName = new Map(jobs.map((j) => [j.name, j]));
-    // Build map from raw uses value → display name for cross-referencing
-    const usesNameMap = new Map();
+    // Build map from child jobPrefix → display name for cross-referencing
+    const nodeByJobPrefix = new Map();
     for (const w of workflows) {
-        if (w.parentUsesValue !== undefined) {
-            usesNameMap.set(w.parentUsesValue, w.name);
-        }
+        nodeByJobPrefix.set(w.jobPrefix, w.name);
     }
     const output = {};
     for (const { name, yaml, jobPrefix } of workflows) {
@@ -30167,38 +30269,20 @@ function buildVisualiserYaml(workflows, jobs) {
             throw new Error(`Workflow YAML must be an object, got ${kind}`);
         }
         const rawJobs = doc.jobs ?? {};
-        const outputJobs = {};
-        for (const [jobId, rawJob] of Object.entries(rawJobs)) {
-            const job = rawJob !== null && typeof rawJob === "object" && !Array.isArray(rawJob)
-                ? rawJob
-                : {};
-            const entry = {};
-            if (typeof job.uses === "string") {
-                // Reusable workflow job — emit uses: <name>, no duration
-                const reusableName = usesNameMap.get(job.uses);
-                if (reusableName === undefined)
-                    continue;
-                entry["uses"] = reusableName;
-                const needs = parseNeeds(job.needs);
-                if (needs.length > 0)
-                    entry["needs"] = needs;
+        const variants = matrixVariants(jobPrefix, jobs);
+        if (variants.length > 0) {
+            // This workflow was called via a matrix job — emit one section per variant
+            for (const variant of variants) {
+                output[`${name} (${variant})`] = {
+                    jobs: processJobs(rawJobs, withVariant(jobPrefix, variant), jobs, timingByName, nodeByJobPrefix),
+                };
             }
-            else {
-                // Regular job — look up timing
-                const lookupName = typeof job.name === "string" ? job.name : jobId;
-                const timing = timingByName.get(`${jobPrefix}${lookupName}`);
-                if (!timing)
-                    continue;
-                const duration = durationSeconds(timing.started_at, timing.completed_at);
-                if (duration !== undefined)
-                    entry["duration"] = duration;
-                const needs = parseNeeds(job.needs);
-                if (needs.length > 0)
-                    entry["needs"] = needs;
-            }
-            outputJobs[jobId] = entry;
         }
-        output[name] = { jobs: outputJobs };
+        else {
+            output[name] = {
+                jobs: processJobs(rawJobs, jobPrefix, jobs, timingByName, nodeByJobPrefix),
+            };
+        }
     }
     return yamlLib.dump(output);
 }

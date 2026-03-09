@@ -81334,15 +81334,52 @@ ZipStream.prototype.finalize = function() {
 /***/ }),
 
 /***/ 46879:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.fetchRunDetails = fetchRunDetails;
 exports.fetchWorkflowPath = fetchWorkflowPath;
 exports.fetchWorkflowFile = fetchWorkflowFile;
+exports.parseUsesRef = parseUsesRef;
 exports.fetchJobs = fetchJobs;
+exports.fetchAllWorkflowNodes = fetchAllWorkflowNodes;
+const yaml = __importStar(__nccwpck_require__(74281));
+const names_1 = __nccwpck_require__(46455);
 async function fetchRunDetails(octokit, owner, repo, runId) {
     const { data } = await octokit.rest.actions.getWorkflowRun({
         owner,
@@ -81378,6 +81415,29 @@ async function fetchWorkflowFile(octokit, owner, repo, path, ref) {
     }
     return Buffer.from(data.content, "base64").toString("utf-8");
 }
+function parseUsesRef(uses, owner, repo, headSha) {
+    // Local: "./.github/workflows/deploy.yml"
+    if (uses.startsWith("./")) {
+        return { owner, repo, path: uses.slice(2), ref: headSha };
+    }
+    // External: "org/repo/.github/workflows/deploy.yml@ref"
+    const atIdx = uses.lastIndexOf("@");
+    if (atIdx === -1)
+        throw new Error(`Unrecognised uses value: "${uses}"`);
+    const ref = uses.slice(atIdx + 1);
+    const rest = uses.slice(0, atIdx); // "org/repo/.github/workflows/deploy.yml"
+    const slashIdx = rest.indexOf("/");
+    if (slashIdx === -1)
+        throw new Error(`Unrecognised uses value: "${uses}"`);
+    const extOwner = rest.slice(0, slashIdx);
+    const afterOwner = rest.slice(slashIdx + 1); // "repo/.github/workflows/deploy.yml"
+    const slashIdx2 = afterOwner.indexOf("/");
+    if (slashIdx2 === -1)
+        throw new Error(`Unrecognised uses value: "${uses}"`);
+    const extRepo = afterOwner.slice(0, slashIdx2);
+    const path = afterOwner.slice(slashIdx2 + 1);
+    return { owner: extOwner, repo: extRepo, path, ref };
+}
 async function fetchJobs(octokit, owner, repo, runId) {
     const jobs = await octokit.paginate(octokit.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: runId, per_page: 100 });
     return jobs
@@ -81387,6 +81447,101 @@ async function fetchJobs(octokit, owner, repo, runId) {
         started_at: j.started_at ?? null,
         completed_at: j.completed_at ?? null,
     }));
+}
+async function fetchAllWorkflowNodes(octokit, owner, repo, mainWorkflowName, mainWorkflowPath, headSha) {
+    const seenNames = new Set();
+    // Track visited paths as "owner/repo/path@ref" to prevent cycles
+    const visited = new Set();
+    const queue = [
+        {
+            owner,
+            repo,
+            path: mainWorkflowPath,
+            ref: headSha,
+            rawName: mainWorkflowName,
+            jobPrefix: "",
+            parentUsesValue: undefined,
+        },
+    ];
+    const nodes = [];
+    while (queue.length > 0) {
+        const entry = queue.shift();
+        if (!entry)
+            break;
+        const key = `${entry.owner}/${entry.repo}/${entry.path}@${entry.ref}`;
+        if (visited.has(key))
+            continue;
+        visited.add(key);
+        let workflowYaml;
+        try {
+            workflowYaml = await fetchWorkflowFile(octokit, entry.owner, entry.repo, entry.path, entry.ref);
+        }
+        catch (e) {
+            console.warn(`Warning: could not fetch reusable workflow ${entry.path}: skipping`, e);
+            continue;
+        }
+        // Parse once; reuse for name extraction and child discovery below
+        let parsedDoc = null;
+        try {
+            parsedDoc = yaml.load(workflowYaml);
+        }
+        catch {
+            // unparsable YAML: skip name extraction and child discovery
+        }
+        const doc = parsedDoc && typeof parsedDoc === "object" && !Array.isArray(parsedDoc)
+            ? parsedDoc
+            : null;
+        // Determine display name: prefer workflow's own name: field, fall back to rawName
+        let rawName = entry.rawName;
+        if (doc) {
+            const nameField = doc["name"];
+            if (typeof nameField === "string" && nameField.trim()) {
+                rawName = nameField;
+            }
+        }
+        const name = (0, names_1.normaliseWorkflowName)(rawName, seenNames);
+        nodes.push({
+            name,
+            yaml: workflowYaml,
+            jobPrefix: entry.jobPrefix,
+            parentUsesValue: entry.parentUsesValue,
+        });
+        // Discover child uses references
+        if (doc) {
+            const rawJobs = doc["jobs"] ?? {};
+            if (rawJobs && typeof rawJobs === "object" && !Array.isArray(rawJobs)) {
+                for (const [jobId, rawJob] of Object.entries(rawJobs)) {
+                    if (rawJob &&
+                        typeof rawJob === "object" &&
+                        !Array.isArray(rawJob) &&
+                        typeof rawJob["uses"] === "string") {
+                        const usesValue = rawJob["uses"];
+                        let ref;
+                        try {
+                            ref = parseUsesRef(usesValue, entry.owner, entry.repo, entry.ref);
+                        }
+                        catch {
+                            console.warn(`Warning: could not parse uses value "${usesValue}": skipping`);
+                            continue;
+                        }
+                        // Derive a fallback name from the filename
+                        const filename = ref.path.split("/").pop() ?? ref.path;
+                        const fallbackName = filename.replace(/\.[^.]+$/, "");
+                        queue.push({
+                            owner: ref.owner,
+                            repo: ref.repo,
+                            path: ref.path,
+                            ref: ref.ref,
+                            rawName: fallbackName,
+                            jobPrefix: `${entry.jobPrefix}${jobId} / `,
+                            parentUsesValue: usesValue,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    return nodes;
 }
 
 
@@ -81455,12 +81610,15 @@ async function run() {
     const { name, headSha, workflowId } = await (0, api_1.fetchRunDetails)(octokit, owner, repo, runId);
     core.info(`Fetching workflow path for workflow ${workflowId}...`);
     const workflowPath = await (0, api_1.fetchWorkflowPath)(octokit, owner, repo, workflowId);
-    core.info(`Fetching workflow file at ${workflowPath}@${headSha}...`);
-    const workflowYaml = await (0, api_1.fetchWorkflowFile)(octokit, owner, repo, workflowPath, headSha);
+    core.info(`Fetching workflow nodes (including reusable workflows)...`);
+    const workflowNodes = await (0, api_1.fetchAllWorkflowNodes)(octokit, owner, repo, name, workflowPath, headSha);
+    if (workflowNodes.length === 0) {
+        throw new Error(`Failed to fetch workflow file for run ${runId}. Check the action logs above for details.`);
+    }
     core.info(`Fetching job timings...`);
     const jobs = await (0, api_1.fetchJobs)(octokit, owner, repo, runId);
     core.info(`Building visualiser YAML...`);
-    const visualisationYaml = (0, transform_1.buildVisualiserYaml)(name, workflowYaml, jobs);
+    const visualisationYaml = (0, transform_1.buildVisualiserYaml)(workflowNodes, jobs);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-visualisation-"));
     const outFile = path.join(tmpDir, "pipeline-visualisation.yaml");
     fs.writeFileSync(outFile, visualisationYaml, "utf-8");
@@ -81472,6 +81630,32 @@ async function run() {
 run().catch((err) => {
     core.setFailed(err instanceof Error ? err.message : String(err));
 });
+
+
+/***/ }),
+
+/***/ 46455:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+// Shared types and utilities used by both api.ts and transform.ts.
+// Extracted here to avoid a circular dependency between those two modules.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.normaliseWorkflowName = normaliseWorkflowName;
+function normaliseWorkflowName(raw, seen) {
+    const base = raw
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "workflow";
+    let candidate = base;
+    let n = 2;
+    while (seen.has(candidate)) {
+        candidate = `${base}-${n++}`;
+    }
+    seen.add(candidate);
+    return candidate;
+}
 
 
 /***/ }),
@@ -81515,8 +81699,11 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.normaliseWorkflowName = void 0;
 exports.buildVisualiserYaml = buildVisualiserYaml;
-const yaml = __importStar(__nccwpck_require__(74281));
+const yamlLib = __importStar(__nccwpck_require__(74281));
+var names_1 = __nccwpck_require__(46455);
+Object.defineProperty(exports, "normaliseWorkflowName", ({ enumerable: true, get: function () { return names_1.normaliseWorkflowName; } }));
 function parseNeeds(raw) {
     if (!raw)
         return [];
@@ -81528,45 +81715,67 @@ function durationSeconds(started, completed) {
     const diff = Math.round((new Date(completed).getTime() - new Date(started).getTime()) / 1000);
     return diff >= 0 ? diff : undefined;
 }
-function buildVisualiserYaml(workflowName, workflowYaml, jobs) {
-    let doc;
-    try {
-        doc = yaml.load(workflowYaml);
-    }
-    catch (e) {
-        throw new Error(`Failed to parse workflow YAML: ${e.message}`, {
-            cause: e,
-        });
-    }
-    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
-        const kind = doc === null || doc === undefined
-            ? "empty"
-            : Array.isArray(doc)
-                ? "an array"
-                : typeof doc;
-        throw new Error(`Workflow YAML must be an object, got ${kind}`);
-    }
-    const rawJobs = doc.jobs ?? {};
+function buildVisualiserYaml(workflows, jobs) {
     const timingByName = new Map(jobs.map((j) => [j.name, j]));
-    const outputJobs = {};
-    for (const [jobId, rawJob] of Object.entries(rawJobs)) {
-        const job = rawJob !== null && typeof rawJob === "object" && !Array.isArray(rawJob)
-            ? rawJob
-            : {};
-        const entry = {};
-        const lookupName = typeof job.name === "string" ? job.name : jobId;
-        const timing = timingByName.get(lookupName);
-        if (!timing)
-            continue;
-        const duration = durationSeconds(timing.started_at, timing.completed_at);
-        if (duration !== undefined)
-            entry["duration"] = duration;
-        const needs = parseNeeds(job.needs);
-        if (needs.length > 0)
-            entry["needs"] = needs;
-        outputJobs[jobId] = entry;
+    // Build map from raw uses value → display name for cross-referencing
+    const usesNameMap = new Map();
+    for (const w of workflows) {
+        if (w.parentUsesValue !== undefined) {
+            usesNameMap.set(w.parentUsesValue, w.name);
+        }
     }
-    return yaml.dump({ [workflowName]: { jobs: outputJobs } });
+    const output = {};
+    for (const { name, yaml, jobPrefix } of workflows) {
+        let doc;
+        try {
+            doc = yamlLib.load(yaml);
+        }
+        catch (e) {
+            throw new Error(`Failed to parse workflow YAML: ${e.message}`, { cause: e });
+        }
+        if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+            const kind = doc === null || doc === undefined
+                ? "empty"
+                : Array.isArray(doc)
+                    ? "an array"
+                    : typeof doc;
+            throw new Error(`Workflow YAML must be an object, got ${kind}`);
+        }
+        const rawJobs = doc.jobs ?? {};
+        const outputJobs = {};
+        for (const [jobId, rawJob] of Object.entries(rawJobs)) {
+            const job = rawJob !== null && typeof rawJob === "object" && !Array.isArray(rawJob)
+                ? rawJob
+                : {};
+            const entry = {};
+            if (typeof job.uses === "string") {
+                // Reusable workflow job — emit uses: <name>, no duration
+                const reusableName = usesNameMap.get(job.uses);
+                if (reusableName === undefined)
+                    continue;
+                entry["uses"] = reusableName;
+                const needs = parseNeeds(job.needs);
+                if (needs.length > 0)
+                    entry["needs"] = needs;
+            }
+            else {
+                // Regular job — look up timing
+                const lookupName = typeof job.name === "string" ? job.name : jobId;
+                const timing = timingByName.get(`${jobPrefix}${lookupName}`);
+                if (!timing)
+                    continue;
+                const duration = durationSeconds(timing.started_at, timing.completed_at);
+                if (duration !== undefined)
+                    entry["duration"] = duration;
+                const needs = parseNeeds(job.needs);
+                if (needs.length > 0)
+                    entry["needs"] = needs;
+            }
+            outputJobs[jobId] = entry;
+        }
+        output[name] = { jobs: outputJobs };
+    }
+    return yamlLib.dump(output);
 }
 
 

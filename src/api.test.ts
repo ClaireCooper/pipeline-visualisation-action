@@ -4,6 +4,8 @@ import {
   fetchWorkflowPath,
   fetchWorkflowFile,
   fetchJobs,
+  parseUsesRef,
+  fetchAllWorkflowNodes,
 } from "./api";
 
 const mockOctokit = {
@@ -269,5 +271,256 @@ describe("fetchJobs", () => {
         completed_at: "2024-01-01T00:00:45Z",
       },
     ]);
+  });
+});
+
+describe("parseUsesRef", () => {
+  it("parses a local uses reference", () => {
+    const result = parseUsesRef(
+      "./.github/workflows/deploy.yml",
+      "myorg",
+      "myrepo",
+      "abc123",
+    );
+    expect(result).toEqual({
+      owner: "myorg",
+      repo: "myrepo",
+      path: ".github/workflows/deploy.yml",
+      ref: "abc123",
+    });
+  });
+
+  it("parses an external uses reference", () => {
+    const result = parseUsesRef(
+      "otherorg/otherrepo/.github/workflows/deploy.yml@v2",
+      "myorg",
+      "myrepo",
+      "abc123",
+    );
+    expect(result).toEqual({
+      owner: "otherorg",
+      repo: "otherrepo",
+      path: ".github/workflows/deploy.yml",
+      ref: "v2",
+    });
+  });
+
+  it("throws for an unrecognised format", () => {
+    expect(() =>
+      parseUsesRef("not-a-valid-ref", "myorg", "myrepo", "abc123"),
+    ).toThrow("Unrecognised uses");
+  });
+});
+
+describe("fetchAllWorkflowNodes", () => {
+  const mainYaml = Buffer.from(
+    `
+name: CI
+jobs:
+  build:
+    runs-on: ubuntu-latest
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    needs: [build]
+`,
+  ).toString("base64");
+
+  const deployYaml = Buffer.from(
+    `
+name: Deploy
+jobs:
+  deploy-a:
+    runs-on: ubuntu-latest
+  deploy-b:
+    runs-on: ubuntu-latest
+`,
+  ).toString("base64");
+
+  beforeEach(() => {
+    mockOctokit.rest.repos.getContent.mockImplementation(
+      ({ path }: { path: string }) => {
+        if (path === ".github/workflows/ci.yml") {
+          return Promise.resolve({
+            data: { content: mainYaml, encoding: "base64" },
+          });
+        }
+        if (path === ".github/workflows/deploy.yml") {
+          return Promise.resolve({
+            data: { content: deployYaml, encoding: "base64" },
+          });
+        }
+        return Promise.reject(new Error(`Unexpected path: ${path}`));
+      },
+    );
+  });
+
+  it("returns the main workflow node plus all reusable workflow nodes", async () => {
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "ci",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0].name).toBe("ci");
+    expect(nodes[0].jobPrefix).toBe("");
+    expect(nodes[1].name).toBe("deploy");
+    expect(nodes[1].jobPrefix).toBe("deploy / ");
+    expect(nodes[1].parentUsesValue).toBe("./.github/workflows/deploy.yml");
+  });
+
+  it("does not fetch the same workflow twice (cycle/dedup protection)", async () => {
+    // deploy.yml references itself
+    const selfRefYaml = Buffer.from(
+      `
+name: Deploy
+jobs:
+  deploy-a:
+    uses: ./.github/workflows/deploy.yml
+`,
+    ).toString("base64");
+    mockOctokit.rest.repos.getContent.mockImplementation(
+      ({ path }: { path: string }) => {
+        if (path === ".github/workflows/ci.yml") {
+          return Promise.resolve({
+            data: { content: mainYaml, encoding: "base64" },
+          });
+        }
+        if (path === ".github/workflows/deploy.yml") {
+          return Promise.resolve({
+            data: { content: selfRefYaml, encoding: "base64" },
+          });
+        }
+        return Promise.reject(new Error(`Unexpected path: ${path}`));
+      },
+    );
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "ci",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    // Should not recurse infinitely; deploy appears once
+    expect(nodes.filter((n) => n.name === "deploy")).toHaveLength(1);
+  });
+
+  it("skips a reusable workflow when fetch fails and logs a warning", async () => {
+    mockOctokit.rest.repos.getContent.mockImplementation(
+      ({ path }: { path: string }) => {
+        if (path === ".github/workflows/ci.yml") {
+          return Promise.resolve({
+            data: { content: mainYaml, encoding: "base64" },
+          });
+        }
+        return Promise.reject(new Error("Not found"));
+      },
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockReturnValue(undefined);
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "ci",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].name).toBe("ci");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("deploy.yml"),
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("prefers the name: field in the root workflow YAML over the caller-supplied name", async () => {
+    // mainYaml already has name: CI; pass a different name as mainWorkflowName
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "something-else",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    expect(nodes[0].name).toBe("ci");
+  });
+
+  it("normalises workflow names and deduplicates", async () => {
+    // Two different files both named "Deploy"
+    const deploy2Yaml = Buffer.from(
+      `
+name: Deploy
+jobs:
+  step:
+    runs-on: ubuntu-latest
+`,
+    ).toString("base64");
+    const mainWithTwo = Buffer.from(
+      `
+name: CI
+jobs:
+  deploy1:
+    uses: ./.github/workflows/deploy.yml
+  deploy2:
+    uses: ./.github/workflows/deploy2.yml
+`,
+    ).toString("base64");
+    mockOctokit.rest.repos.getContent.mockImplementation(
+      ({ path }: { path: string }) => {
+        if (path === ".github/workflows/ci.yml")
+          return Promise.resolve({
+            data: { content: mainWithTwo, encoding: "base64" },
+          });
+        if (path === ".github/workflows/deploy.yml")
+          return Promise.resolve({
+            data: { content: deployYaml, encoding: "base64" },
+          });
+        if (path === ".github/workflows/deploy2.yml")
+          return Promise.resolve({
+            data: { content: deploy2Yaml, encoding: "base64" },
+          });
+        return Promise.reject(new Error(`Unexpected path: ${path}`));
+      },
+    );
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "ci",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    expect(nodes[1].name).toBe("deploy");
+    expect(nodes[2].name).toBe("deploy-2");
+  });
+
+  it("handles a workflow whose YAML is unparsable — uses filename as name and discovers no children", async () => {
+    const badYaml = Buffer.from("{ not: valid: yaml: [").toString("base64");
+    mockOctokit.rest.repos.getContent.mockImplementation(
+      ({ path }: { path: string }) => {
+        if (path === ".github/workflows/ci.yml") {
+          return Promise.resolve({
+            data: { content: badYaml, encoding: "base64" },
+          });
+        }
+        return Promise.reject(new Error(`Unexpected path: ${path}`));
+      },
+    );
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "ci",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].name).toBe("ci"); // falls back to rawName when YAML is unparsable
+    expect(nodes[0].jobPrefix).toBe("");
   });
 });

@@ -27,9 +27,14 @@ jobs:
     steps:
       - run: sleep 2
 
+  # Reusable workflow job to test uses: support
+  deploy:
+    needs: [job-b, job-c]
+    uses: ./.github/workflows/reusable-deploy.yaml
+
   # Run the action itself and upload the artifact
   run-action:
-    needs: [job-b, job-c]
+    needs: [job-b, job-c, deploy]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,31 +60,52 @@ jobs:
           cat pipeline-visualisation.yaml
           echo "-------------------------"
           python3 - <<'EOF'
-          import yaml, sys
+          import re, sys
 
           with open("pipeline-visualisation.yaml") as f:
-              data = yaml.safe_load(f)
+              content = f.read()
 
-          assert data and isinstance(data, dict), "Expected a non-empty YAML object"
+          # Normalise durations so we can compare structure without caring about exact values
+          normalised = re.sub(r'duration: \d+', 'duration: N', content)
 
-          workflow_name, workflow = next(iter(data.items()))
-          print(f"Workflow: {workflow_name}")
+          expected = """\
+          integration-test:
+            jobs:
+              job-a:
+                duration: N
+              job-b:
+                duration: N
+                needs:
+                  - job-a
+              job-c:
+                duration: N
+                needs:
+                  - job-a
+              deploy:
+                uses: reusable-deploy
+                needs:
+                  - job-b
+                  - job-c
+          reusable-deploy:
+            jobs:
+              deploy-step-a:
+                duration: N
+              deploy-step-b:
+                duration: N
+                needs:
+                  - deploy-step-a
+          """
 
-          assert "jobs" in workflow, "Missing 'jobs' key"
-          jobs = workflow["jobs"]
-          print(f"Jobs: {list(jobs.keys())}")
+          # Strip consistent leading indentation from the heredoc
+          import textwrap
+          expected = textwrap.dedent(expected)
 
-          assert len(jobs) >= 3, f"Expected at least 3 jobs, got {len(jobs)}"
-
-          for job_name, job in jobs.items():
-              assert isinstance(job, dict), f"Job {job_name} is not an object"
-              assert "duration" in job, f"Job {job_name} missing duration key"
-              if "duration" in job:
-                  assert isinstance(job["duration"], int) and job["duration"] >= 0, \
-                      f"Job {job_name} has invalid duration: {job['duration']}"
-              if "needs" in job:
-                  assert isinstance(job["needs"], list), \
-                      f"Job {job_name} needs is not a list"
+          if normalised != expected:
+              print("EXPECTED:")
+              print(expected)
+              print("GOT:")
+              print(normalised)
+              sys.exit(1)
 
           print("Validation passed.")
           EOF

@@ -1,6 +1,57 @@
 import { describe, it, expect } from "vitest";
 import * as yaml from "js-yaml";
-import { buildVisualiserYaml } from "./transform";
+import {
+  buildVisualiserYaml,
+  normaliseWorkflowName,
+  WorkflowNode,
+} from "./transform";
+
+describe("normaliseWorkflowName", () => {
+  it("lowercases and hyphenates spaces", () => {
+    const seen = new Set<string>();
+    expect(normaliseWorkflowName("My Deploy Workflow", seen)).toBe(
+      "my-deploy-workflow",
+    );
+  });
+
+  it("replaces underscores with hyphens", () => {
+    const seen = new Set<string>();
+    expect(normaliseWorkflowName("deploy_production", seen)).toBe(
+      "deploy-production",
+    );
+  });
+
+  it("collapses multiple separators", () => {
+    const seen = new Set<string>();
+    expect(normaliseWorkflowName("deploy  --  prod", seen)).toBe("deploy-prod");
+  });
+
+  it("trims leading and trailing hyphens", () => {
+    const seen = new Set<string>();
+    expect(normaliseWorkflowName("  deploy  ", seen)).toBe("deploy");
+  });
+
+  it("deduplicates by appending -2, -3", () => {
+    const seen = new Set<string>(["deploy"]);
+    expect(normaliseWorkflowName("deploy", seen)).toBe("deploy-2");
+  });
+
+  it("increments suffix until unique", () => {
+    const seen = new Set<string>(["deploy", "deploy-2"]);
+    expect(normaliseWorkflowName("deploy", seen)).toBe("deploy-3");
+  });
+
+  it("adds the result to the seen set", () => {
+    const seen = new Set<string>();
+    normaliseWorkflowName("deploy", seen);
+    expect(seen.has("deploy")).toBe(true);
+  });
+
+  it("falls back to 'workflow' when input contains only special characters", () => {
+    const seen = new Set<string>();
+    expect(normaliseWorkflowName("---", seen)).toBe("workflow");
+  });
+});
 
 const workflowYaml = `
 name: CI
@@ -33,9 +84,11 @@ const jobs = [
   },
 ];
 
+const ciNode: WorkflowNode = { name: "CI", yaml: workflowYaml, jobPrefix: "" };
+
 describe("buildVisualiserYaml", () => {
   it("produces correct YAML with durations and needs", () => {
-    const result = buildVisualiserYaml("CI", workflowYaml, jobs);
+    const result = buildVisualiserYaml([ciNode], jobs);
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(parsed).toEqual({
       CI: {
@@ -55,13 +108,16 @@ jobs:
   only-job:
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("Simple", simpleYaml, [
-      {
-        name: "only-job",
-        started_at: "2024-01-01T00:00:00Z",
-        completed_at: "2024-01-01T00:01:00Z",
-      },
-    ]);
+    const result = buildVisualiserYaml(
+      [{ name: "Simple", yaml: simpleYaml, jobPrefix: "" }],
+      [
+        {
+          name: "only-job",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:01:00Z",
+        },
+      ],
+    );
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(parsed).toEqual({
       Simple: { jobs: { "only-job": { duration: 60 } } },
@@ -69,7 +125,7 @@ jobs:
   });
 
   it("excludes jobs with no timing entry", () => {
-    const result = buildVisualiserYaml("CI", workflowYaml, []);
+    const result = buildVisualiserYaml([ciNode], []);
     const parsed = yaml.load(result) as Record<string, unknown>;
     const ciJobs = (parsed as { CI: { jobs: Record<string, unknown> } }).CI
       .jobs;
@@ -84,13 +140,16 @@ jobs:
     name: My Build
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlWithJobName, [
-      {
-        name: "My Build",
-        started_at: "2024-01-01T00:00:00Z",
-        completed_at: "2024-01-01T00:00:30Z",
-      },
-    ]);
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: yamlWithJobName, jobPrefix: "" }],
+      [
+        {
+          name: "My Build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:30Z",
+        },
+      ],
+    );
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(parsed).toEqual({
       CI: { jobs: { build: { duration: 30 } } },
@@ -98,15 +157,21 @@ jobs:
   });
 
   it("throws a descriptive error for malformed YAML", () => {
-    expect(() => buildVisualiserYaml("CI", "{ invalid: yaml: [", [])).toThrow(
-      "Failed to parse workflow YAML",
-    );
+    expect(() =>
+      buildVisualiserYaml(
+        [{ name: "CI", yaml: "{ invalid: yaml: [", jobPrefix: "" }],
+        [],
+      ),
+    ).toThrow("Failed to parse workflow YAML");
   });
 
   it("throws when YAML parses to a non-object", () => {
-    expect(() => buildVisualiserYaml("CI", "just a string", [])).toThrow(
-      "Workflow YAML must be an object",
-    );
+    expect(() =>
+      buildVisualiserYaml(
+        [{ name: "CI", yaml: "just a string", jobPrefix: "" }],
+        [],
+      ),
+    ).toThrow("Workflow YAML must be an object");
   });
 
   it("handles a job with no body (null job entry)", () => {
@@ -118,18 +183,21 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlWithNullJob, [
-      {
-        name: "build",
-        started_at: "2024-01-01T00:00:00Z",
-        completed_at: "2024-01-01T00:00:10Z",
-      },
-      {
-        name: "test",
-        started_at: "2024-01-01T00:00:10Z",
-        completed_at: "2024-01-01T00:00:20Z",
-      },
-    ]);
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: yamlWithNullJob, jobPrefix: "" }],
+      [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+        {
+          name: "test",
+          started_at: "2024-01-01T00:00:10Z",
+          completed_at: "2024-01-01T00:00:20Z",
+        },
+      ],
+    );
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(parsed).toEqual({
       CI: {
@@ -151,13 +219,16 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlWithStringNeeds, [
-      {
-        name: "test",
-        started_at: "2024-01-01T00:00:00Z",
-        completed_at: "2024-01-01T00:00:10Z",
-      },
-    ]);
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: yamlWithStringNeeds, jobPrefix: "" }],
+      [
+        {
+          name: "test",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+      ],
+    );
     const parsed = yaml.load(result) as Record<string, unknown>;
     const testJob = (parsed as { CI: { jobs: { test: { needs: string[] } } } })
       .CI.jobs.test;
@@ -172,13 +243,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlNoNameField, [
-      {
-        name: "build",
-        started_at: "2024-01-01T00:00:00Z",
-        completed_at: "2024-01-01T00:01:00Z",
-      },
-    ]);
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: yamlNoNameField, jobPrefix: "" }],
+      [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:01:00Z",
+        },
+      ],
+    );
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(parsed).toEqual({
       CI: { jobs: { build: { duration: 60 } } },
@@ -187,13 +261,18 @@ jobs:
 
   it("omits duration when started_at is null on a present timing entry", () => {
     const result = buildVisualiserYaml(
-      "CI",
-      `
+      [
+        {
+          name: "CI",
+          yaml: `
 name: CI
 jobs:
   build:
     runs-on: ubuntu-latest
 `,
+          jobPrefix: "",
+        },
+      ],
       [
         {
           name: "build",
@@ -210,13 +289,18 @@ jobs:
 
   it("omits duration when completed_at is null on a present timing entry", () => {
     const result = buildVisualiserYaml(
-      "CI",
-      `
+      [
+        {
+          name: "CI",
+          yaml: `
 name: CI
 jobs:
   build:
     runs-on: ubuntu-latest
 `,
+          jobPrefix: "",
+        },
+      ],
       [
         {
           name: "build",
@@ -233,13 +317,18 @@ jobs:
 
   it("omits duration when completed_at is before started_at", () => {
     const result = buildVisualiserYaml(
-      "CI",
-      `
+      [
+        {
+          name: "CI",
+          yaml: `
 name: CI
 jobs:
   build:
     runs-on: ubuntu-latest
 `,
+          jobPrefix: "",
+        },
+      ],
       [
         {
           name: "build",
@@ -254,16 +343,19 @@ jobs:
     ).toEqual({});
   });
 
-  it("throws when YAML parses to an array", () => {
-    expect(() => buildVisualiserYaml("CI", "- a\n- b", [])).toThrow(
-      "Workflow YAML must be an object",
-    );
+  it("throws when YAML is an array", () => {
+    expect(() =>
+      buildVisualiserYaml(
+        [{ name: "CI", yaml: "- a\n- b", jobPrefix: "" }],
+        [],
+      ),
+    ).toThrow("Workflow YAML must be an object");
   });
 
   it("throws when YAML is an empty string", () => {
-    expect(() => buildVisualiserYaml("CI", "", [])).toThrow(
-      "Workflow YAML must be an object",
-    );
+    expect(() =>
+      buildVisualiserYaml([{ name: "CI", yaml: "", jobPrefix: "" }], []),
+    ).toThrow("Workflow YAML must be an object");
   });
 
   it("preserves multi-element needs array", () => {
@@ -278,13 +370,16 @@ jobs:
     needs: [build, lint]
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlMultiNeeds, [
-      {
-        name: "test",
-        started_at: "2024-01-01T00:00:00Z",
-        completed_at: "2024-01-01T00:00:10Z",
-      },
-    ]);
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: yamlMultiNeeds, jobPrefix: "" }],
+      [
+        {
+          name: "test",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+      ],
+    );
     const parsed = yaml.load(result) as Record<string, unknown>;
     const testJob = (parsed as { CI: { jobs: { test: { needs: string[] } } } })
       .CI.jobs.test;
@@ -292,15 +387,18 @@ jobs:
   });
 
   it("produces empty jobs map when workflow has no jobs key", () => {
-    const result = buildVisualiserYaml("CI", "name: CI\n", []);
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: "name: CI\n", jobPrefix: "" }],
+      [],
+    );
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(parsed).toEqual({ CI: { jobs: {} } });
   });
 
   it("throws when YAML is the null literal", () => {
-    expect(() => buildVisualiserYaml("CI", "null", [])).toThrow(
-      "Workflow YAML must be an object",
-    );
+    expect(() =>
+      buildVisualiserYaml([{ name: "CI", yaml: "null", jobPrefix: "" }], []),
+    ).toThrow("Workflow YAML must be an object");
   });
 
   it("does not fall back to job key when explicit name field is present", () => {
@@ -313,13 +411,16 @@ jobs:
     name: My Build
     runs-on: ubuntu-latest
 `;
-    const result = buildVisualiserYaml("CI", yamlWithName, [
-      {
-        name: "build",
-        started_at: "2024-01-01T00:00:00Z",
-        completed_at: "2024-01-01T00:01:00Z",
-      },
-    ]);
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: yamlWithName, jobPrefix: "" }],
+      [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:01:00Z",
+        },
+      ],
+    );
     const parsed = yaml.load(result) as Record<string, unknown>;
     expect(
       (parsed as { CI: { jobs: Record<string, unknown> } }).CI.jobs,
@@ -328,13 +429,18 @@ jobs:
 
   it("emits duration: 0 for a job that completes in under 500ms", () => {
     const result = buildVisualiserYaml(
-      "CI",
-      `
+      [
+        {
+          name: "CI",
+          yaml: `
 name: CI
 jobs:
   build:
     runs-on: ubuntu-latest
 `,
+          jobPrefix: "",
+        },
+      ],
       [
         {
           name: "build",
@@ -348,5 +454,136 @@ jobs:
       (parsed as { CI: { jobs: { build: { duration: number } } } }).CI.jobs
         .build,
     ).toEqual({ duration: 0 });
+  });
+});
+
+describe("buildVisualiserYaml with reusable workflows", () => {
+  const mainYaml = `
+name: CI
+jobs:
+  build:
+    runs-on: ubuntu-latest
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    needs: [build]
+`;
+
+  const deployYaml = `
+name: Deploy
+jobs:
+  deploy-a:
+    runs-on: ubuntu-latest
+  deploy-b:
+    runs-on: ubuntu-latest
+`;
+
+  const workflows: WorkflowNode[] = [
+    { name: "ci", yaml: mainYaml, jobPrefix: "" },
+    {
+      name: "deploy",
+      yaml: deployYaml,
+      jobPrefix: "deploy / ",
+      parentUsesValue: "./.github/workflows/deploy.yml",
+    },
+  ];
+
+  const jobs = [
+    {
+      name: "build",
+      started_at: "2024-01-01T00:00:00Z",
+      completed_at: "2024-01-01T00:00:30Z",
+    },
+    {
+      name: "deploy / deploy-a",
+      started_at: "2024-01-01T00:00:30Z",
+      completed_at: "2024-01-01T00:01:00Z",
+    },
+    {
+      name: "deploy / deploy-b",
+      started_at: "2024-01-01T00:00:30Z",
+      completed_at: "2024-01-01T00:02:00Z",
+    },
+  ];
+
+  it("emits uses: <name> for reusable workflow jobs in caller", () => {
+    const result = buildVisualiserYaml(workflows, jobs);
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    const deployJob = (
+      parsed as {
+        ci: { jobs: { deploy: { uses: string; needs: string[] } } };
+      }
+    ).ci.jobs.deploy;
+    expect(deployJob).toEqual({ uses: "deploy", needs: ["build"] });
+  });
+
+  it("emits correct timings for reusable workflow jobs using prefix", () => {
+    const result = buildVisualiserYaml(workflows, jobs);
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    const deployJobs = (
+      parsed as {
+        deploy: { jobs: Record<string, unknown> };
+      }
+    ).deploy.jobs;
+    expect(deployJobs).toEqual({
+      "deploy-a": { duration: 30 },
+      "deploy-b": { duration: 90 },
+    });
+  });
+
+  it("omits uses job when the referenced workflow is not in the node list", () => {
+    const mainOnly: WorkflowNode[] = [
+      { name: "ci", yaml: mainYaml, jobPrefix: "" },
+    ];
+    const result = buildVisualiserYaml(mainOnly, jobs);
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    const ciJobs = (parsed as { ci: { jobs: Record<string, unknown> } }).ci
+      .jobs;
+    expect(ciJobs).not.toHaveProperty("deploy");
+  });
+
+  it("handles deeply nested reusable workflows with chained prefixes", () => {
+    const subYaml = `
+name: Sub
+jobs:
+  sub-job:
+    runs-on: ubuntu-latest
+`;
+    const nestedWorkflows: WorkflowNode[] = [
+      { name: "ci", yaml: mainYaml, jobPrefix: "" },
+      {
+        name: "deploy",
+        yaml: `
+name: Deploy
+jobs:
+  deploy-a:
+    uses: ./.github/workflows/sub.yml
+`,
+        jobPrefix: "deploy / ",
+        parentUsesValue: "./.github/workflows/deploy.yml",
+      },
+      {
+        name: "sub",
+        yaml: subYaml,
+        jobPrefix: "deploy / deploy-a / ",
+        parentUsesValue: "./.github/workflows/sub.yml",
+      },
+    ];
+    const nestedJobs = [
+      {
+        name: "build",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:10Z",
+      },
+      {
+        name: "deploy / deploy-a / sub-job",
+        started_at: "2024-01-01T00:00:10Z",
+        completed_at: "2024-01-01T00:00:20Z",
+      },
+    ];
+    const result = buildVisualiserYaml(nestedWorkflows, nestedJobs);
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    const subJobs = (parsed as { sub: { jobs: Record<string, unknown> } }).sub
+      .jobs;
+    expect(subJobs).toEqual({ "sub-job": { duration: 10 } });
   });
 });

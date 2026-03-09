@@ -1,0 +1,16 @@
+name: Reusable Deploy
+
+on:
+  workflow_call:
+
+jobs:
+  deploy-step-a:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 1
+
+  deploy-step-b:
+    needs: [deploy-step-a]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 1

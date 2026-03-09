@@ -463,6 +463,76 @@ jobs:
     ).toEqual({ duration: 9296 });
   });
 
+  it("ignores steps within jobs", () => {
+    const yamlWithSteps = `
+name: CI
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm test
+`;
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: yamlWithSteps, jobPrefix: "" }],
+      [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:01:00Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(parsed).toEqual({ CI: { jobs: { build: { duration: 60 } } } });
+  });
+
+  it("emits each matrix variant as a separate job inheriting needs", () => {
+    const matrixYaml = `
+name: CI
+jobs:
+  build:
+    runs-on: ubuntu-latest
+  test:
+    needs: [build]
+    strategy:
+      matrix:
+        node: [18, 20]
+    runs-on: ubuntu-latest
+`;
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: matrixYaml, jobPrefix: "" }],
+      [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:30Z",
+        },
+        {
+          name: "test (18)",
+          started_at: "2024-01-01T00:00:30Z",
+          completed_at: "2024-01-01T00:01:00Z",
+        },
+        {
+          name: "test (20)",
+          started_at: "2024-01-01T00:00:30Z",
+          completed_at: "2024-01-01T00:01:30Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      CI: {
+        jobs: {
+          build: { duration: 30 },
+          "test (18)": { duration: 30, needs: ["build"] },
+          "test (20)": { duration: 60, needs: ["build"] },
+        },
+      },
+    });
+  });
+
   it("emits duration: 0 for a job that completes in under 500ms", () => {
     const result = buildVisualiserYaml(
       [

@@ -40,12 +40,10 @@ export function buildVisualiserYaml(
 ): string {
   const timingByName = new Map(jobs.map((j) => [j.name, j]));
 
-  // Build map from raw uses value → display name for cross-referencing
-  const usesNameMap = new Map<string, string>();
+  // Build map from child jobPrefix → display name for cross-referencing
+  const nodeByJobPrefix = new Map<string, string>();
   for (const w of workflows) {
-    if (w.parentUsesValue !== undefined) {
-      usesNameMap.set(w.parentUsesValue, w.name);
-    }
+    nodeByJobPrefix.set(w.jobPrefix, w.name);
   }
 
   const output: Record<string, unknown> = {};
@@ -81,7 +79,8 @@ export function buildVisualiserYaml(
 
       if (typeof job.uses === "string") {
         // Reusable workflow job — emit uses: <name>, no duration
-        const reusableName = usesNameMap.get(job.uses);
+        const childPrefix = `${jobPrefix}${jobId} / `;
+        const reusableName = nodeByJobPrefix.get(childPrefix);
         if (reusableName === undefined) continue;
         entry["uses"] = reusableName;
         const needs = parseNeeds(job.needs);

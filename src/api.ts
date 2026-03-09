@@ -131,7 +131,7 @@ interface QueueEntry {
   ref: string;
   rawName: string;
   jobPrefix: string;
-  parentUsesValue?: string;
+  ancestors: string[];
 }
 
 export async function fetchAllWorkflowNodes(
@@ -143,8 +143,6 @@ export async function fetchAllWorkflowNodes(
   headSha: string,
 ): Promise<WorkflowNode[]> {
   const seenNames = new Set<string>();
-  // Track visited paths as "owner/repo/path@ref" to prevent cycles
-  const visited = new Set<string>();
 
   const queue: QueueEntry[] = [
     {
@@ -154,7 +152,7 @@ export async function fetchAllWorkflowNodes(
       ref: headSha,
       rawName: mainWorkflowName,
       jobPrefix: "",
-      parentUsesValue: undefined,
+      ancestors: [],
     },
   ];
 
@@ -164,8 +162,7 @@ export async function fetchAllWorkflowNodes(
     const entry = queue.shift();
     if (!entry) break;
     const key = `${entry.owner}/${entry.repo}/${entry.path}@${entry.ref}`;
-    if (visited.has(key)) continue;
-    visited.add(key);
+    if (entry.ancestors.includes(key)) continue;
 
     let workflowYaml: string;
     try {
@@ -210,7 +207,6 @@ export async function fetchAllWorkflowNodes(
       name,
       yaml: workflowYaml,
       jobPrefix: entry.jobPrefix,
-      parentUsesValue: entry.parentUsesValue,
     });
 
     // Discover child uses references
@@ -248,7 +244,7 @@ export async function fetchAllWorkflowNodes(
               ref: ref.ref,
               rawName: fallbackName,
               jobPrefix: `${entry.jobPrefix}${jobId} / `,
-              parentUsesValue: usesValue,
+              ancestors: [...entry.ancestors, key],
             });
           }
         }

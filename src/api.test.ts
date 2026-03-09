@@ -401,12 +401,10 @@ jobs:
     expect(nodes[1]).toMatchObject({
       name: "deploy",
       jobPrefix: "deploy / ",
-      parentUsesValue: "./.github/workflows/deploy.yml",
     });
     expect(nodes[2]).toMatchObject({
       name: "sub",
       jobPrefix: "deploy / deploy-a / ",
-      parentUsesValue: "./.github/workflows/sub.yml",
     });
   });
 
@@ -424,10 +422,9 @@ jobs:
     expect(nodes[0].jobPrefix).toBe("");
     expect(nodes[1].name).toBe("deploy");
     expect(nodes[1].jobPrefix).toBe("deploy / ");
-    expect(nodes[1].parentUsesValue).toBe("./.github/workflows/deploy.yml");
   });
 
-  it("does not fetch the same workflow twice (cycle/dedup protection)", async () => {
+  it("does not recurse infinitely when a workflow references itself (cycle detection)", async () => {
     // deploy.yml references itself
     const selfRefYaml = Buffer.from(
       `
@@ -462,6 +459,50 @@ jobs:
     );
     // Should not recurse infinitely; deploy appears once
     expect(nodes.filter((n) => n.name === "deploy")).toHaveLength(1);
+  });
+
+  it("returns a separate node for each job that uses the same reusable workflow", async () => {
+    const multiDeployYaml = Buffer.from(
+      `
+name: CI
+jobs:
+  deploy-staging:
+    uses: ./.github/workflows/deploy.yml
+  deploy-prod:
+    uses: ./.github/workflows/deploy.yml
+`,
+    ).toString("base64");
+    mockOctokit.rest.repos.getContent.mockImplementation(
+      ({ path }: { path: string }) => {
+        if (path === ".github/workflows/ci.yml")
+          return Promise.resolve({
+            data: { content: multiDeployYaml, encoding: "base64" },
+          });
+        if (path === ".github/workflows/deploy.yml")
+          return Promise.resolve({
+            data: { content: deployYaml, encoding: "base64" },
+          });
+        return Promise.reject(new Error(`Unexpected path: ${path}`));
+      },
+    );
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "ci",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0]).toMatchObject({ name: "ci", jobPrefix: "" });
+    expect(nodes[1]).toMatchObject({
+      name: "deploy",
+      jobPrefix: "deploy-staging / ",
+    });
+    expect(nodes[2]).toMatchObject({
+      name: "deploy-2",
+      jobPrefix: "deploy-prod / ",
+    });
   });
 
   it("skips a reusable workflow when fetch fails and logs a warning", async () => {

@@ -74,9 +74,14 @@ async function run(): Promise<void> {
   core.info(`Uploading artifact...`);
   const { DefaultArtifactClient } = await import("@actions/artifact");
   const client = new DefaultArtifactClient();
-  await client.uploadArtifact("pipeline-visualisation", [outFile], tmpDir, {
-    skipArchive: true,
-  });
+  await client.uploadArtifact(
+    "pipeline-visualisation.yaml",
+    [outFile],
+    tmpDir,
+    {
+      skipArchive: true,
+    },
+  );
 
   core.info("Done.");
 }

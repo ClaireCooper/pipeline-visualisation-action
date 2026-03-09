@@ -237,13 +237,18 @@ export async function fetchAllWorkflowNodes(
             // Derive a fallback name from the filename
             const filename = ref.path.split("/").pop() ?? ref.path;
             const fallbackName = filename.replace(/\.[^.]+$/, "");
+            // Use the job's display name (name: field if present, else job ID) to
+            // build the child prefix, matching how GitHub names child jobs in the API.
+            const job = rawJob as Record<string, unknown>;
+            const jobDisplayName =
+              typeof job["name"] === "string" ? job["name"] : jobId;
             queue.push({
               owner: ref.owner,
               repo: ref.repo,
               path: ref.path,
               ref: ref.ref,
               rawName: fallbackName,
-              jobPrefix: `${entry.jobPrefix}${jobId} / `,
+              jobPrefix: `${entry.jobPrefix}${jobDisplayName} / `,
               ancestors: [...entry.ancestors, key],
             });
           }

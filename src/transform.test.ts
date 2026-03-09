@@ -631,6 +631,67 @@ jobs:
     });
   });
 
+  it("resolves uses: correctly when the job name: field matches the job ID", () => {
+    const mainYamlNameMatchesId = `
+name: CI
+jobs:
+  deploy:
+    name: deploy
+    uses: ./.github/workflows/deploy.yml
+`;
+    const result = buildVisualiserYaml(
+      [
+        { name: "ci", yaml: mainYamlNameMatchesId, jobPrefix: "" },
+        { name: "deploy", yaml: deployYaml, jobPrefix: "deploy / " },
+      ],
+      [
+        {
+          name: "deploy / deploy-a",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(
+      (parsed as { ci: { jobs: { deploy: { uses: string } } } }).ci.jobs.deploy,
+    ).toEqual({ uses: "deploy" });
+  });
+
+  it("resolves uses: correctly when the job name: field differs from the job ID", () => {
+    const mainYamlDisplayName = `
+name: CI
+jobs:
+  deploy:
+    name: Deploy to Production
+    uses: ./.github/workflows/deploy.yml
+`;
+    const result = buildVisualiserYaml(
+      [
+        { name: "ci", yaml: mainYamlDisplayName, jobPrefix: "" },
+        {
+          name: "deploy",
+          yaml: deployYaml,
+          jobPrefix: "Deploy to Production / ",
+        },
+      ],
+      [
+        {
+          name: "Deploy to Production / deploy-a",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(
+      (parsed as { ci: { jobs: { deploy: { uses: string } } } }).ci.jobs.deploy,
+    ).toEqual({ uses: "deploy" });
+    const deployJobs = (parsed as { deploy: { jobs: Record<string, unknown> } })
+      .deploy.jobs;
+    expect(deployJobs).toEqual({ "deploy-a": { duration: 10 } });
+  });
+
   it("produces separate output sections when the same workflow is used by two different jobs", () => {
     const mainYamlWithTwo = `
 name: CI

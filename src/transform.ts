@@ -79,7 +79,8 @@ export function buildVisualiserYaml(
 
       if (typeof job.uses === "string") {
         // Reusable workflow job — emit uses: <name>, no duration
-        const childPrefix = `${jobPrefix}${jobId} / `;
+        const jobDisplayName = typeof job.name === "string" ? job.name : jobId;
+        const childPrefix = `${jobPrefix}${jobDisplayName} / `;
         const reusableName = nodeByJobPrefix.get(childPrefix);
         if (reusableName === undefined) continue;
         entry["uses"] = reusableName;

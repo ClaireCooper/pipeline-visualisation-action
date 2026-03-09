@@ -86,21 +86,40 @@ export function buildVisualiserYaml(
         entry["uses"] = reusableName;
         const needs = parseNeeds(job.needs);
         if (needs.length > 0) entry["needs"] = needs;
+        outputJobs[jobId] = entry;
       } else {
         // Regular job — look up timing
         const lookupName = typeof job.name === "string" ? job.name : jobId;
-        const timing = timingByName.get(`${jobPrefix}${lookupName}`);
-        if (!timing) continue;
-        const duration = durationSeconds(
-          timing.started_at,
-          timing.completed_at,
-        );
-        if (duration !== undefined) entry["duration"] = duration;
-        const needs = parseNeeds(job.needs);
-        if (needs.length > 0) entry["needs"] = needs;
+        const prefixedName = `${jobPrefix}${lookupName}`;
+        const timing = timingByName.get(prefixedName);
+        if (timing) {
+          const duration = durationSeconds(
+            timing.started_at,
+            timing.completed_at,
+          );
+          if (duration !== undefined) entry["duration"] = duration;
+          const needs = parseNeeds(job.needs);
+          if (needs.length > 0) entry["needs"] = needs;
+          outputJobs[jobId] = entry;
+        } else {
+          // Matrix job — emit each variant (e.g. "test (18)", "test (20)") as a
+          // separate job, inheriting needs from the parent job definition
+          const matrixPrefix = `${prefixedName} (`;
+          const needs = parseNeeds(job.needs);
+          for (const variant of jobs.filter((j) =>
+            j.name.startsWith(matrixPrefix),
+          )) {
+            const variantEntry: Record<string, unknown> = {};
+            const duration = durationSeconds(
+              variant.started_at,
+              variant.completed_at,
+            );
+            if (duration !== undefined) variantEntry["duration"] = duration;
+            if (needs.length > 0) variantEntry["needs"] = needs;
+            outputJobs[variant.name.slice(jobPrefix.length)] = variantEntry;
+          }
+        }
       }
-
-      outputJobs[jobId] = entry;
     }
 
     output[name] = { jobs: outputJobs };

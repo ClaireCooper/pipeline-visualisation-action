@@ -37,9 +37,12 @@ jobs:
     steps:
       - run: sleep 1
 
-  # Reusable workflow job to test uses: support
+  # Matrix reusable workflow job to test matrix + uses: support
   deploy:
     needs: [job-b, job-c]
+    strategy:
+      matrix:
+        env: [staging, prod]
     uses: ./.github/workflows/reusable-deploy.yaml
 
   # Run the action itself and upload the artifact
@@ -97,12 +100,25 @@ jobs:
                 duration: N
                 needs:
                   - job-a
-              deploy:
-                uses: reusable-deploy
+              deploy (staging):
+                uses: reusable-deploy (staging)
                 needs:
                   - job-b
                   - job-c
-          reusable-deploy:
+              deploy (prod):
+                uses: reusable-deploy (prod)
+                needs:
+                  - job-b
+                  - job-c
+          reusable-deploy (staging):
+            jobs:
+              deploy-step-a:
+                duration: N
+              deploy-step-b:
+                duration: N
+                needs:
+                  - deploy-step-a
+          reusable-deploy (prod):
             jobs:
               deploy-step-a:
                 duration: N

@@ -806,4 +806,51 @@ jobs:
       .jobs;
     expect(subJobs).toEqual({ "sub-job": { duration: 10 } });
   });
+
+  it("expands a matrix reusable workflow into per-variant sections", () => {
+    const matrixMainYaml = `
+name: CI
+jobs:
+  deploy:
+    needs: [build]
+    strategy:
+      matrix:
+        env: [staging, prod]
+    uses: ./.github/workflows/deploy.yml
+`;
+    const simpleDeployYaml = `
+name: Deploy
+jobs:
+  deploy-step:
+    runs-on: ubuntu-latest
+`;
+    const matrixWorkflows: WorkflowNode[] = [
+      { name: "ci", yaml: matrixMainYaml, jobPrefix: "" },
+      { name: "deploy", yaml: simpleDeployYaml, jobPrefix: "deploy / " },
+    ];
+    const matrixJobs = [
+      {
+        name: "deploy (staging) / deploy-step",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:10Z",
+      },
+      {
+        name: "deploy (prod) / deploy-step",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:20Z",
+      },
+    ];
+    const result = buildVisualiserYaml(matrixWorkflows, matrixJobs);
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      ci: {
+        jobs: {
+          "deploy (staging)": { uses: "deploy (staging)", needs: ["build"] },
+          "deploy (prod)": { uses: "deploy (prod)", needs: ["build"] },
+        },
+      },
+      "deploy (staging)": { jobs: { "deploy-step": { duration: 10 } } },
+      "deploy (prod)": { jobs: { "deploy-step": { duration: 20 } } },
+    });
+  });
 });

@@ -354,6 +354,62 @@ jobs:
     );
   });
 
+  it("recursively fetches multiple layers of reusable workflows", async () => {
+    const deployWithSubYaml = Buffer.from(
+      `
+name: Deploy
+jobs:
+  deploy-a:
+    uses: ./.github/workflows/sub.yml
+`,
+    ).toString("base64");
+    const subYaml = Buffer.from(
+      `
+name: Sub
+jobs:
+  sub-job:
+    runs-on: ubuntu-latest
+`,
+    ).toString("base64");
+    mockOctokit.rest.repos.getContent.mockImplementation(
+      ({ path }: { path: string }) => {
+        if (path === ".github/workflows/ci.yml")
+          return Promise.resolve({
+            data: { content: mainYaml, encoding: "base64" },
+          });
+        if (path === ".github/workflows/deploy.yml")
+          return Promise.resolve({
+            data: { content: deployWithSubYaml, encoding: "base64" },
+          });
+        if (path === ".github/workflows/sub.yml")
+          return Promise.resolve({
+            data: { content: subYaml, encoding: "base64" },
+          });
+        return Promise.reject(new Error(`Unexpected path: ${path}`));
+      },
+    );
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "ci",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0]).toMatchObject({ name: "ci", jobPrefix: "" });
+    expect(nodes[1]).toMatchObject({
+      name: "deploy",
+      jobPrefix: "deploy / ",
+      parentUsesValue: "./.github/workflows/deploy.yml",
+    });
+    expect(nodes[2]).toMatchObject({
+      name: "sub",
+      jobPrefix: "deploy / deploy-a / ",
+      parentUsesValue: "./.github/workflows/sub.yml",
+    });
+  });
+
   it("returns the main workflow node plus all reusable workflow nodes", async () => {
     const nodes = await fetchAllWorkflowNodes(
       mockOctokit as never,

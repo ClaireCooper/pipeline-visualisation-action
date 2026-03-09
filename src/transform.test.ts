@@ -427,6 +427,42 @@ jobs:
     ).not.toHaveProperty("build");
   });
 
+  it("emits correct duration for a job that takes longer than a minute", () => {
+    const result = buildVisualiserYaml(
+      [ciNode],
+      [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:03:45Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(
+      (parsed as { CI: { jobs: { build: { duration: number } } } }).CI.jobs
+        .build,
+    ).toEqual({ duration: 225 });
+  });
+
+  it("emits correct duration for a job that takes longer than an hour", () => {
+    const result = buildVisualiserYaml(
+      [ciNode],
+      [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T02:34:56Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(
+      (parsed as { CI: { jobs: { build: { duration: number } } } }).CI.jobs
+        .build,
+    ).toEqual({ duration: 9296 });
+  });
+
   it("emits duration: 0 for a job that completes in under 500ms", () => {
     const result = buildVisualiserYaml(
       [

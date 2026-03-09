@@ -1,5 +1,4 @@
 import * as core from "@actions/core";
-import { DefaultArtifactClient } from "@actions/artifact";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
@@ -19,7 +18,6 @@ async function run(): Promise<void> {
       `run-id must be a valid integer, got: ${core.getInput("run-id")}`,
     );
   }
-  const artifactName = core.getInput("artifact-name", { required: true });
 
   const [owner, repo] = (process.env["GITHUB_REPOSITORY"] ?? "").split("/");
   if (!owner || !repo) {
@@ -73,9 +71,12 @@ async function run(): Promise<void> {
   const outFile = path.join(tmpDir, "pipeline-visualisation.yaml");
   fs.writeFileSync(outFile, visualisationYaml, "utf-8");
 
-  core.info(`Uploading artifact "${artifactName}"...`);
+  core.info(`Uploading artifact...`);
+  const { DefaultArtifactClient } = await import("@actions/artifact");
   const client = new DefaultArtifactClient();
-  await client.uploadArtifact(artifactName, [outFile], tmpDir);
+  await client.uploadArtifact("pipeline-visualisation", [outFile], tmpDir, {
+    skipArchive: true,
+  });
 
   core.info("Done.");
 }

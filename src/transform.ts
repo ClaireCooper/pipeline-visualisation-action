@@ -1,9 +1,15 @@
-import * as yaml from "js-yaml";
+import * as yamlLib from "js-yaml";
 import type { JobTiming } from "./api";
+export { normaliseWorkflowName } from "./names";
+// WorkflowNode is also used locally in this file, so it needs a local import binding
+// in addition to the re-export.
+import type { WorkflowNode } from "./names";
+export type { WorkflowNode };
 
 interface RawJob {
   name?: string;
   needs?: string | string[];
+  uses?: string;
   [key: string]: unknown;
 }
 
@@ -29,48 +35,76 @@ function durationSeconds(
 }
 
 export function buildVisualiserYaml(
-  workflowName: string,
-  workflowYaml: string,
+  workflows: WorkflowNode[],
   jobs: JobTiming[],
 ): string {
-  let doc: unknown;
-  try {
-    doc = yaml.load(workflowYaml);
-  } catch (e) {
-    throw new Error(`Failed to parse workflow YAML: ${(e as Error).message}`, {
-      cause: e,
-    });
-  }
-  if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
-    const kind =
-      doc === null || doc === undefined
-        ? "empty"
-        : Array.isArray(doc)
-          ? "an array"
-          : typeof doc;
-    throw new Error(`Workflow YAML must be an object, got ${kind}`);
-  }
-  const rawJobs = (doc as RawWorkflow).jobs ?? {};
-
   const timingByName = new Map(jobs.map((j) => [j.name, j]));
 
-  const outputJobs: Record<string, Record<string, unknown>> = {};
-
-  for (const [jobId, rawJob] of Object.entries(rawJobs)) {
-    const job =
-      rawJob !== null && typeof rawJob === "object" && !Array.isArray(rawJob)
-        ? (rawJob as RawJob)
-        : {};
-    const entry: Record<string, unknown> = {};
-    const lookupName = typeof job.name === "string" ? job.name : jobId;
-    const timing = timingByName.get(lookupName);
-    if (!timing) continue;
-    const duration = durationSeconds(timing.started_at, timing.completed_at);
-    if (duration !== undefined) entry["duration"] = duration;
-    const needs = parseNeeds(job.needs);
-    if (needs.length > 0) entry["needs"] = needs;
-    outputJobs[jobId] = entry;
+  // Build map from raw uses value → display name for cross-referencing
+  const usesNameMap = new Map<string, string>();
+  for (const w of workflows) {
+    if (w.parentUsesValue !== undefined) {
+      usesNameMap.set(w.parentUsesValue, w.name);
+    }
   }
 
-  return yaml.dump({ [workflowName]: { jobs: outputJobs } });
+  const output: Record<string, unknown> = {};
+
+  for (const { name, yaml, jobPrefix } of workflows) {
+    let doc: unknown;
+    try {
+      doc = yamlLib.load(yaml);
+    } catch (e) {
+      throw new Error(
+        `Failed to parse workflow YAML: ${(e as Error).message}`,
+        { cause: e },
+      );
+    }
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+      const kind =
+        doc === null || doc === undefined
+          ? "empty"
+          : Array.isArray(doc)
+            ? "an array"
+            : typeof doc;
+      throw new Error(`Workflow YAML must be an object, got ${kind}`);
+    }
+    const rawJobs = (doc as RawWorkflow).jobs ?? {};
+    const outputJobs: Record<string, Record<string, unknown>> = {};
+
+    for (const [jobId, rawJob] of Object.entries(rawJobs)) {
+      const job =
+        rawJob !== null && typeof rawJob === "object" && !Array.isArray(rawJob)
+          ? (rawJob as RawJob)
+          : {};
+      const entry: Record<string, unknown> = {};
+
+      if (typeof job.uses === "string") {
+        // Reusable workflow job — emit uses: <name>, no duration
+        const reusableName = usesNameMap.get(job.uses);
+        if (reusableName === undefined) continue;
+        entry["uses"] = reusableName;
+        const needs = parseNeeds(job.needs);
+        if (needs.length > 0) entry["needs"] = needs;
+      } else {
+        // Regular job — look up timing
+        const lookupName = typeof job.name === "string" ? job.name : jobId;
+        const timing = timingByName.get(`${jobPrefix}${lookupName}`);
+        if (!timing) continue;
+        const duration = durationSeconds(
+          timing.started_at,
+          timing.completed_at,
+        );
+        if (duration !== undefined) entry["duration"] = duration;
+        const needs = parseNeeds(job.needs);
+        if (needs.length > 0) entry["needs"] = needs;
+      }
+
+      outputJobs[jobId] = entry;
+    }
+
+    output[name] = { jobs: outputJobs };
+  }
+
+  return yamlLib.dump(output);
 }

@@ -6,7 +6,7 @@ import * as fs from "fs";
 import {
   fetchRunDetails,
   fetchWorkflowPath,
-  fetchWorkflowFile,
+  fetchAllWorkflowNodes,
   fetchJobs,
 } from "./api";
 import { buildVisualiserYaml } from "./transform";
@@ -45,20 +45,27 @@ async function run(): Promise<void> {
     workflowId,
   );
 
-  core.info(`Fetching workflow file at ${workflowPath}@${headSha}...`);
-  const workflowYaml = await fetchWorkflowFile(
+  core.info(`Fetching workflow nodes (including reusable workflows)...`);
+  const workflowNodes = await fetchAllWorkflowNodes(
     octokit,
     owner,
     repo,
+    name,
     workflowPath,
     headSha,
   );
+
+  if (workflowNodes.length === 0) {
+    throw new Error(
+      `Failed to fetch workflow file for run ${runId}. Check the action logs above for details.`,
+    );
+  }
 
   core.info(`Fetching job timings...`);
   const jobs = await fetchJobs(octokit, owner, repo, runId);
 
   core.info(`Building visualiser YAML...`);
-  const visualisationYaml = buildVisualiserYaml(name, workflowYaml, jobs);
+  const visualisationYaml = buildVisualiserYaml(workflowNodes, jobs);
 
   const tmpDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "pipeline-visualisation-"),

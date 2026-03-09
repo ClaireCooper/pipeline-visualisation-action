@@ -461,6 +461,44 @@ jobs:
     expect(nodes.filter((n) => n.name === "deploy")).toHaveLength(1);
   });
 
+  it("uses the job name: field (not job ID) when building the child jobPrefix", async () => {
+    const mainWithNameYaml = Buffer.from(
+      `
+name: CI
+jobs:
+  deploy:
+    name: Deploy to Production
+    uses: ./.github/workflows/deploy.yml
+`,
+    ).toString("base64");
+    mockOctokit.rest.repos.getContent.mockImplementation(
+      ({ path }: { path: string }) => {
+        if (path === ".github/workflows/ci.yml")
+          return Promise.resolve({
+            data: { content: mainWithNameYaml, encoding: "base64" },
+          });
+        if (path === ".github/workflows/deploy.yml")
+          return Promise.resolve({
+            data: { content: deployYaml, encoding: "base64" },
+          });
+        return Promise.reject(new Error(`Unexpected path: ${path}`));
+      },
+    );
+    const nodes = await fetchAllWorkflowNodes(
+      mockOctokit as never,
+      "myorg",
+      "myrepo",
+      "ci",
+      ".github/workflows/ci.yml",
+      "abc123",
+    );
+    expect(nodes).toHaveLength(2);
+    expect(nodes[1]).toMatchObject({
+      name: "deploy",
+      jobPrefix: "Deploy to Production / ",
+    });
+  });
+
   it("returns a separate node for each job that uses the same reusable workflow", async () => {
     const multiDeployYaml = Buffer.from(
       `

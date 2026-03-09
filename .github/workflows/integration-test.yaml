@@ -42,17 +42,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./
-        with:
-          artifact-name: pipeline-visualisation-integration-test
 
   # Download the artifact and validate it is well-formed
   validate:
     needs: [run-action]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
-          name: pipeline-visualisation-integration-test
+          name: pipeline-visualisation.yaml
 
       - name: Validate artifact
         run: |

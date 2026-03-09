@@ -11,10 +11,6 @@ inputs:
     description: ID of the workflow run to visualise (defaults to current run)
     required: false
     default: ${{ github.run_id }}
-  artifact-name:
-    description: Name of the uploaded artifact
-    required: false
-    default: pipeline-visualisation
 
 runs:
   using: node20

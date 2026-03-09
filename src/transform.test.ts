@@ -585,12 +585,7 @@ jobs:
 
   const workflows: WorkflowNode[] = [
     { name: "ci", yaml: mainYaml, jobPrefix: "" },
-    {
-      name: "deploy",
-      yaml: deployYaml,
-      jobPrefix: "deploy / ",
-      parentUsesValue: "./.github/workflows/deploy.yml",
-    },
+    { name: "deploy", yaml: deployYaml, jobPrefix: "deploy / " },
   ];
 
   const jobs = [
@@ -636,6 +631,66 @@ jobs:
     });
   });
 
+  it("produces separate output sections when the same workflow is used by two different jobs", () => {
+    const mainYamlWithTwo = `
+name: CI
+jobs:
+  deploy-staging:
+    uses: ./.github/workflows/deploy.yml
+  deploy-prod:
+    uses: ./.github/workflows/deploy.yml
+`;
+    const twoCallWorkflows: WorkflowNode[] = [
+      { name: "ci", yaml: mainYamlWithTwo, jobPrefix: "" },
+      { name: "deploy", yaml: deployYaml, jobPrefix: "deploy-staging / " },
+      { name: "deploy-2", yaml: deployYaml, jobPrefix: "deploy-prod / " },
+    ];
+    const twoCallJobs = [
+      {
+        name: "deploy-staging / deploy-a",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:10Z",
+      },
+      {
+        name: "deploy-staging / deploy-b",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:20Z",
+      },
+      {
+        name: "deploy-prod / deploy-a",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:01:00Z",
+      },
+      {
+        name: "deploy-prod / deploy-b",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:02:00Z",
+      },
+    ];
+    const result = buildVisualiserYaml(twoCallWorkflows, twoCallJobs);
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      ci: {
+        jobs: {
+          "deploy-staging": { uses: "deploy" },
+          "deploy-prod": { uses: "deploy-2" },
+        },
+      },
+      deploy: {
+        jobs: {
+          "deploy-a": { duration: 10 },
+          "deploy-b": { duration: 20 },
+        },
+      },
+      "deploy-2": {
+        jobs: {
+          "deploy-a": { duration: 60 },
+          "deploy-b": { duration: 120 },
+        },
+      },
+    });
+  });
+
   it("omits uses job when the referenced workflow is not in the node list", () => {
     const mainOnly: WorkflowNode[] = [
       { name: "ci", yaml: mainYaml, jobPrefix: "" },
@@ -665,13 +720,11 @@ jobs:
     uses: ./.github/workflows/sub.yml
 `,
         jobPrefix: "deploy / ",
-        parentUsesValue: "./.github/workflows/deploy.yml",
       },
       {
         name: "sub",
         yaml: subYaml,
         jobPrefix: "deploy / deploy-a / ",
-        parentUsesValue: "./.github/workflows/sub.yml",
       },
     ];
     const nestedJobs = [

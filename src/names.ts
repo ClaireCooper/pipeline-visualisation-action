@@ -5,7 +5,6 @@ export interface WorkflowNode {
   name: string;
   yaml: string;
   jobPrefix: string;
-  parentUsesValue?: string;
 }
 
 export function normaliseWorkflowName(raw: string, seen: Set<string>): string {

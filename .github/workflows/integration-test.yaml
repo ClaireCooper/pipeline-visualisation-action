@@ -27,6 +27,16 @@ jobs:
     steps:
       - run: sleep 2
 
+  # Matrix job to test matrix variant support
+  test:
+    needs: [job-a]
+    strategy:
+      matrix:
+        version: [1, 2]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 1
+
   # Reusable workflow job to test uses: support
   deploy:
     needs: [job-b, job-c]
@@ -34,7 +44,7 @@ jobs:
 
   # Run the action itself and upload the artifact
   run-action:
-    needs: [job-b, job-c, deploy]
+    needs: [job-b, job-c, test, deploy]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -76,6 +86,14 @@ jobs:
                 needs:
                   - job-a
               job-c:
+                duration: N
+                needs:
+                  - job-a
+              test (1):
+                duration: N
+                needs:
+                  - job-a
+              test (2):
                 duration: N
                 needs:
                   - job-a

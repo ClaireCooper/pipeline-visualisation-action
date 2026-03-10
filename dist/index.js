@@ -30153,7 +30153,7 @@ function findVariantSuffixes(base, jobs) {
             seen.add(rest.slice(0, closeIdx));
         }
     }
-    return [...seen];
+    return [...seen].sort();
 }
 // Given a child workflow node's jobPrefix (e.g. "deploy / "), find matrix variant
 // suffixes from the timing data — e.g. ["staging", "prod"].
@@ -30284,7 +30284,7 @@ function buildVisualiserYaml(workflows, jobs) {
             };
         }
     }
-    return yamlLib.dump(output);
+    return yamlLib.dump(output, { noRefs: true });
 }
 
 

@@ -46,7 +46,7 @@ function findVariantSuffixes(base: string, jobs: JobTiming[]): string[] {
       seen.add(rest.slice(0, closeIdx));
     }
   }
-  return [...seen];
+  return [...seen].sort();
 }
 
 // Given a child workflow node's jobPrefix (e.g. "deploy / "), find matrix variant
@@ -212,5 +212,5 @@ export function buildVisualiserYaml(
     }
   }
 
-  return yamlLib.dump(output);
+  return yamlLib.dump(output, { noRefs: true });
 }

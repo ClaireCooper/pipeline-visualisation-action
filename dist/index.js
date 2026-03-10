@@ -30041,13 +30041,14 @@ async function run() {
     const jobs = await (0, api_1.fetchJobs)(octokit, owner, repo, runId);
     core.info(`Building visualiser YAML...`);
     const visualisationYaml = (0, transform_1.buildVisualiserYaml)(workflowNodes, jobs);
+    const artifactName = (0, transform_1.buildArtifactName)(workflowNodes[0].name);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-visualisation-"));
-    const outFile = path.join(tmpDir, "pipeline-visualisation.yaml");
+    const outFile = path.join(tmpDir, artifactName);
     fs.writeFileSync(outFile, visualisationYaml, "utf-8");
     core.info(`Uploading artifact...`);
     const { DefaultArtifactClient } = await __nccwpck_require__.e(/* import() */ 52).then(__nccwpck_require__.bind(__nccwpck_require__, 52052));
     const client = new DefaultArtifactClient();
-    await client.uploadArtifact("pipeline-visualisation.yaml", [outFile], tmpDir, {
+    await client.uploadArtifact(artifactName, [outFile], tmpDir, {
         skipArchive: true,
     });
     core.info("Done.");
@@ -30125,6 +30126,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.normaliseWorkflowName = void 0;
+exports.buildArtifactName = buildArtifactName;
 exports.buildVisualiserYaml = buildVisualiserYaml;
 const yamlLib = __importStar(__nccwpck_require__(74281));
 var names_1 = __nccwpck_require__(46455);
@@ -30245,6 +30247,9 @@ function processJobs(rawJobs, jobPrefix, jobs, timingByName, nodeByJobPrefix) {
         }
     }
     return outputJobs;
+}
+function buildArtifactName(workflowName) {
+    return `${workflowName}-visualisation.yaml`;
 }
 function buildVisualiserYaml(workflows, jobs) {
     const timingByName = new Map(jobs.map((j) => [j.name, j]));

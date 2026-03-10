@@ -30230,7 +30230,9 @@ function processJobs(rawJobs, jobPrefix, jobs, timingByName, nodeByJobPrefix) {
                 // separate job, inheriting needs from the parent job definition
                 const matrixPrefix = `${prefixedName} (`;
                 const needs = parseNeeds(job.needs);
-                for (const variant of jobs.filter((j) => j.name.startsWith(matrixPrefix))) {
+                for (const variant of jobs
+                    .filter((j) => j.name.startsWith(matrixPrefix))
+                    .sort((a, b) => a.name.localeCompare(b.name))) {
                     const variantEntry = {};
                     const duration = durationSeconds(variant.started_at, variant.completed_at);
                     if (duration !== undefined)

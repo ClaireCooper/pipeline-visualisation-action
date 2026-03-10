@@ -565,6 +565,37 @@ jobs:
     expect(result).not.toContain("*");
   });
 
+  it("emits regular matrix job variants in alphabetical order regardless of API response order", () => {
+    const matrixYaml = `
+name: CI
+jobs:
+  test:
+    strategy:
+      matrix:
+        node: [18, 20]
+    runs-on: ubuntu-latest
+`;
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: matrixYaml, jobPrefix: "" }],
+      [
+        // API returns 20 before 18
+        {
+          name: "test (20)",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+        {
+          name: "test (18)",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:20Z",
+        },
+      ],
+    );
+    const idx18 = result.indexOf("test (18)");
+    const idx20 = result.indexOf("test (20)");
+    expect(idx18).toBeLessThan(idx20);
+  });
+
   it("emits matrix reusable workflow variants in alphabetical order", () => {
     const matrixMainYaml = `
 name: CI

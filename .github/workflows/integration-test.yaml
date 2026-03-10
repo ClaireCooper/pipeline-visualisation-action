@@ -63,17 +63,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: pipeline-visualisation.yaml
+          name: integration-test-visualisation.yaml
 
       - name: Validate artifact
         run: |
-          echo "--- pipeline-visualisation.yaml ---"
-          cat pipeline-visualisation.yaml
+          echo "--- integration-test-visualisation.yaml ---"
+          cat integration-test-visualisation.yaml
           echo "-------------------------"
           python3 - <<'EOF'
           import re, sys
 
-          with open("pipeline-visualisation.yaml") as f:
+          with open("integration-test-visualisation.yaml") as f:
               content = f.read()
 
           # Normalise durations so we can compare structure without caring about exact values

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import * as yaml from "js-yaml";
 import {
+  buildArtifactName,
   buildVisualiserYaml,
   normaliseWorkflowName,
   WorkflowNode,
@@ -962,5 +963,13 @@ jobs:
       "deploy (staging)": { jobs: { "deploy-step": { duration: 10 } } },
       "deploy (prod)": { jobs: { "deploy-step": { duration: 20 } } },
     });
+  });
+});
+
+describe("buildArtifactName", () => {
+  it("returns the workflow name with -visualisation.yaml suffix", () => {
+    expect(buildArtifactName("integration-test")).toBe(
+      "integration-test-visualisation.yaml",
+    );
   });
 });

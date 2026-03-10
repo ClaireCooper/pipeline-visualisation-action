@@ -150,6 +150,10 @@ function processJobs(
   return outputJobs;
 }
 
+export function buildArtifactName(workflowName: string): string {
+  return `${workflowName}-visualisation.yaml`;
+}
+
 export function buildVisualiserYaml(
   workflows: WorkflowNode[],
   jobs: JobTiming[],

@@ -8,7 +8,7 @@ import {
   fetchAllWorkflowNodes,
   fetchJobs,
 } from "./api";
-import { buildVisualiserYaml } from "./transform";
+import { buildArtifactName, buildVisualiserYaml } from "./transform";
 
 async function run(): Promise<void> {
   const token = core.getInput("token", { required: true });
@@ -65,23 +65,19 @@ async function run(): Promise<void> {
   core.info(`Building visualiser YAML...`);
   const visualisationYaml = buildVisualiserYaml(workflowNodes, jobs);
 
+  const artifactName = buildArtifactName(workflowNodes[0].name);
   const tmpDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "pipeline-visualisation-"),
   );
-  const outFile = path.join(tmpDir, "pipeline-visualisation.yaml");
+  const outFile = path.join(tmpDir, artifactName);
   fs.writeFileSync(outFile, visualisationYaml, "utf-8");
 
   core.info(`Uploading artifact...`);
   const { DefaultArtifactClient } = await import("@actions/artifact");
   const client = new DefaultArtifactClient();
-  await client.uploadArtifact(
-    "pipeline-visualisation.yaml",
-    [outFile],
-    tmpDir,
-    {
-      skipArchive: true,
-    },
-  );
+  await client.uploadArtifact(artifactName, [outFile], tmpDir, {
+    skipArchive: true,
+  });
 
   core.info("Done.");
 }

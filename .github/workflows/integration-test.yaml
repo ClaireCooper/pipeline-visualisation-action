@@ -100,17 +100,17 @@ jobs:
                 duration: N
                 needs:
                   - job-a
-              deploy (staging):
-                uses: reusable-deploy (staging)
-                needs:
-                  - job-b
-                  - job-c
               deploy (prod):
                 uses: reusable-deploy (prod)
                 needs:
                   - job-b
                   - job-c
-          reusable-deploy (staging):
+              deploy (staging):
+                uses: reusable-deploy (staging)
+                needs:
+                  - job-b
+                  - job-c
+          reusable-deploy (prod):
             jobs:
               deploy-step-a:
                 duration: N
@@ -118,7 +118,7 @@ jobs:
                 duration: N
                 needs:
                   - deploy-step-a
-          reusable-deploy (prod):
+          reusable-deploy (staging):
             jobs:
               deploy-step-a:
                 duration: N

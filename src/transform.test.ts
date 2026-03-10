@@ -533,6 +533,85 @@ jobs:
     });
   });
 
+  it("does not emit YAML anchors or aliases when multiple jobs share the same needs array", () => {
+    const sharedNeedsYaml = `
+name: CI
+jobs:
+  build:
+    runs-on: ubuntu-latest
+  test:
+    needs: [build]
+    runs-on: ubuntu-latest
+  lint:
+    needs: [build]
+    runs-on: ubuntu-latest
+`;
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: sharedNeedsYaml, jobPrefix: "" }],
+      [
+        {
+          name: "test",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+        {
+          name: "lint",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:20Z",
+        },
+      ],
+    );
+    expect(result).not.toContain("&");
+    expect(result).not.toContain("*");
+  });
+
+  it("emits matrix reusable workflow variants in alphabetical order", () => {
+    const matrixMainYaml = `
+name: CI
+jobs:
+  deploy:
+    strategy:
+      matrix:
+        env: [zebra, apple, mango]
+    uses: ./.github/workflows/deploy.yml
+`;
+    const simpleDeployYaml = `
+name: Deploy
+jobs:
+  step:
+    runs-on: ubuntu-latest
+`;
+    const result = buildVisualiserYaml(
+      [
+        { name: "ci", yaml: matrixMainYaml, jobPrefix: "" },
+        { name: "deploy", yaml: simpleDeployYaml, jobPrefix: "deploy / " },
+      ],
+      [
+        {
+          name: "deploy (mango) / step",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+        {
+          name: "deploy (zebra) / step",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:20Z",
+        },
+        {
+          name: "deploy (apple) / step",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:30Z",
+        },
+      ],
+    );
+    // Variants should appear in alphabetical order regardless of API response order
+    const appleIdx = result.indexOf("deploy (apple)");
+    const mangoIdx = result.indexOf("deploy (mango)");
+    const zebraIdx = result.indexOf("deploy (zebra)");
+    expect(appleIdx).toBeLessThan(mangoIdx);
+    expect(mangoIdx).toBeLessThan(zebraIdx);
+  });
+
   it("emits duration: 0 for a job that completes in under 500ms", () => {
     const result = buildVisualiserYaml(
       [

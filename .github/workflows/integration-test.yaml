@@ -37,6 +37,18 @@ jobs:
     steps:
       - run: sleep 1
 
+  # Matrix job with ${{ matrix.X }} in the name field — tests that the action
+  # can match API job names when the YAML name contains unexpanded expressions
+  named-matrix:
+    needs: [job-a]
+    strategy:
+      matrix:
+        group: [1, 2]
+    name: named-matrix (group ${{ matrix.group }})
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 1
+
   # Matrix reusable workflow job to test matrix + uses: support
   deploy:
     needs: [job-b, job-c]
@@ -47,7 +59,7 @@ jobs:
 
   # Run the action itself and upload the artifact
   run-action:
-    needs: [job-b, job-c, test, deploy]
+    needs: [job-b, job-c, test, named-matrix, deploy]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -97,6 +109,14 @@ jobs:
                 needs:
                   - job-a
               test (2):
+                duration: N
+                needs:
+                  - job-a
+              named-matrix (group 1):
+                duration: N
+                needs:
+                  - job-a
+              named-matrix (group 2):
                 duration: N
                 needs:
                   - job-a

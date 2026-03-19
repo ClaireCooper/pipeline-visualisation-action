@@ -918,6 +918,51 @@ jobs:
     expect(subJobs).toEqual({ "sub-job": { duration: 10 } });
   });
 
+  it("emits matrix variants when job name contains a matrix expression", () => {
+    // Real-world case: name: "Run Cypress tests (group ${{ matrix.group }})"
+    // GitHub expands the expression in API job names, but YAML retains the raw template.
+    const workflowYaml = `
+name: Run Cypress Tests
+jobs:
+  run-cypress-tests:
+    name: Run Cypress tests (group \${{ matrix.group }})
+    strategy:
+      matrix:
+        group: [1, 2]
+    runs-on: ubuntu-latest
+`;
+    const result = buildVisualiserYaml(
+      [
+        {
+          name: "run-cypress-tests",
+          yaml: workflowYaml,
+          jobPrefix: "cypress-tests / ",
+        },
+      ],
+      [
+        {
+          name: "cypress-tests / Run Cypress tests (group 1)",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:10:00Z",
+        },
+        {
+          name: "cypress-tests / Run Cypress tests (group 2)",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:12:00Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      "run-cypress-tests": {
+        jobs: {
+          "Run Cypress tests (group 1)": { duration: 600 },
+          "Run Cypress tests (group 2)": { duration: 720 },
+        },
+      },
+    });
+  });
+
   it("expands a matrix reusable workflow into per-variant sections", () => {
     const matrixMainYaml = `
 name: CI

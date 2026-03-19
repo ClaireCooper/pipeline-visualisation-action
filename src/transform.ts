@@ -1,9 +1,10 @@
 import * as yamlLib from "js-yaml";
 import type { JobTiming } from "./api";
-export { normaliseWorkflowName } from "./names";
 // WorkflowNode is also used locally in this file, so it needs a local import binding
 // in addition to the re-export.
 import type { WorkflowNode } from "./names";
+
+export { normaliseWorkflowName } from "./names";
 export type { WorkflowNode };
 
 interface RawJob {
@@ -34,8 +35,6 @@ function durationSeconds(
   return diff >= 0 ? diff : undefined;
 }
 
-// Given a base string like "deploy (", find all matrix variant suffixes present in
-// timing data — e.g. ["staging", "prod"] if timing has "deploy (staging) / ..." etc.
 function findVariantSuffixes(base: string, jobs: JobTiming[]): string[] {
   const seen = new Set<string>();
   for (const job of jobs) {
@@ -49,9 +48,7 @@ function findVariantSuffixes(base: string, jobs: JobTiming[]): string[] {
   return [...seen].sort();
 }
 
-// Given a child workflow node's jobPrefix (e.g. "deploy / "), find matrix variant
-// suffixes from the timing data — e.g. ["staging", "prod"].
-function matrixVariants(jobPrefix: string, jobs: JobTiming[]): string[] {
+function findMatrixVariants(jobPrefix: string, jobs: JobTiming[]): string[] {
   if (!jobPrefix) return [];
   const parts = jobPrefix.split(" / ");
   parts.pop(); // trailing ""
@@ -61,14 +58,32 @@ function matrixVariants(jobPrefix: string, jobs: JobTiming[]): string[] {
   return findVariantSuffixes(`${prefix}${lastSegment} (`, jobs);
 }
 
-// Substitute the last segment of a jobPrefix with a matrix variant suffix.
-// e.g. ("deploy / ", "staging") → "deploy (staging) / "
-function withVariant(jobPrefix: string, variant: string): string {
+function withMatrixVariant(jobPrefix: string, variant: string): string {
   const parts = jobPrefix.split(" / ");
   parts.pop(); // trailing ""
   const lastSegment = parts.pop() ?? "";
   const parentPart = parts.length > 0 ? parts.join(" / ") + " / " : "";
   return `${parentPart}${lastSegment} (${variant}) / `;
+}
+
+function buildMatrixVariantFilter(
+  jobPrefix: string,
+  lookupName: string,
+  prefixedName: string,
+): (job: JobTiming) => boolean {
+  if (!lookupName.includes("${{")) {
+    const prefix = `${prefixedName} (`;
+    return (job) => job.name.startsWith(prefix);
+  }
+  const re = new RegExp(
+    "^" +
+      (jobPrefix + lookupName)
+        .split(/\$\{\{[^}]*\}\}/)
+        .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join(".+") +
+      "$",
+  );
+  return (job) => re.test(job.name);
 }
 
 function processJobs(
@@ -129,10 +144,14 @@ function processJobs(
       } else {
         // Matrix job — emit each variant (e.g. "test (18)", "test (20)") as a
         // separate job, inheriting needs from the parent job definition
-        const matrixPrefix = `${prefixedName} (`;
+        const isVariant = buildMatrixVariantFilter(
+          jobPrefix,
+          lookupName,
+          prefixedName,
+        );
         const needs = parseNeeds(job.needs);
         for (const variant of jobs
-          .filter((j) => j.name.startsWith(matrixPrefix))
+          .filter(isVariant)
           .sort((a, b) => a.name.localeCompare(b.name))) {
           const variantEntry: Record<string, unknown> = {};
           const duration = durationSeconds(
@@ -189,14 +208,14 @@ export function buildVisualiserYaml(
     }
     const rawJobs = (doc as RawWorkflow).jobs ?? {};
 
-    const variants = matrixVariants(jobPrefix, jobs);
+    const variants = findMatrixVariants(jobPrefix, jobs);
     if (variants.length > 0) {
       // This workflow was called via a matrix job — emit one section per variant
       for (const variant of variants) {
         output[`${name} (${variant})`] = {
           jobs: processJobs(
             rawJobs,
-            withVariant(jobPrefix, variant),
+            withMatrixVariant(jobPrefix, variant),
             jobs,
             timingByName,
             nodeByJobPrefix,

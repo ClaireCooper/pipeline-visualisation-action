@@ -30142,8 +30142,6 @@ function durationSeconds(started, completed) {
     const diff = Math.round((new Date(completed).getTime() - new Date(started).getTime()) / 1000);
     return diff >= 0 ? diff : undefined;
 }
-// Given a base string like "deploy (", find all matrix variant suffixes present in
-// timing data — e.g. ["staging", "prod"] if timing has "deploy (staging) / ..." etc.
 function findVariantSuffixes(base, jobs) {
     const seen = new Set();
     for (const job of jobs) {
@@ -30157,9 +30155,7 @@ function findVariantSuffixes(base, jobs) {
     }
     return [...seen].sort();
 }
-// Given a child workflow node's jobPrefix (e.g. "deploy / "), find matrix variant
-// suffixes from the timing data — e.g. ["staging", "prod"].
-function matrixVariants(jobPrefix, jobs) {
+function findMatrixVariants(jobPrefix, jobs) {
     if (!jobPrefix)
         return [];
     const parts = jobPrefix.split(" / ");
@@ -30169,14 +30165,25 @@ function matrixVariants(jobPrefix, jobs) {
     const prefix = parentPart ? `${parentPart} / ` : "";
     return findVariantSuffixes(`${prefix}${lastSegment} (`, jobs);
 }
-// Substitute the last segment of a jobPrefix with a matrix variant suffix.
-// e.g. ("deploy / ", "staging") → "deploy (staging) / "
-function withVariant(jobPrefix, variant) {
+function withMatrixVariant(jobPrefix, variant) {
     const parts = jobPrefix.split(" / ");
     parts.pop(); // trailing ""
     const lastSegment = parts.pop() ?? "";
     const parentPart = parts.length > 0 ? parts.join(" / ") + " / " : "";
     return `${parentPart}${lastSegment} (${variant}) / `;
+}
+function buildMatrixVariantFilter(jobPrefix, lookupName, prefixedName) {
+    if (!lookupName.includes("${{")) {
+        const prefix = `${prefixedName} (`;
+        return (job) => job.name.startsWith(prefix);
+    }
+    const re = new RegExp("^" +
+        (jobPrefix + lookupName)
+            .split(/\$\{\{[^}]*\}\}/)
+            .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+            .join(".+") +
+        "$");
+    return (job) => re.test(job.name);
 }
 function processJobs(rawJobs, jobPrefix, jobs, timingByName, nodeByJobPrefix) {
     const outputJobs = {};
@@ -30230,10 +30237,10 @@ function processJobs(rawJobs, jobPrefix, jobs, timingByName, nodeByJobPrefix) {
             else {
                 // Matrix job — emit each variant (e.g. "test (18)", "test (20)") as a
                 // separate job, inheriting needs from the parent job definition
-                const matrixPrefix = `${prefixedName} (`;
+                const isVariant = buildMatrixVariantFilter(jobPrefix, lookupName, prefixedName);
                 const needs = parseNeeds(job.needs);
                 for (const variant of jobs
-                    .filter((j) => j.name.startsWith(matrixPrefix))
+                    .filter(isVariant)
                     .sort((a, b) => a.name.localeCompare(b.name))) {
                     const variantEntry = {};
                     const duration = durationSeconds(variant.started_at, variant.completed_at);
@@ -30276,12 +30283,12 @@ function buildVisualiserYaml(workflows, jobs) {
             throw new Error(`Workflow YAML must be an object, got ${kind}`);
         }
         const rawJobs = doc.jobs ?? {};
-        const variants = matrixVariants(jobPrefix, jobs);
+        const variants = findMatrixVariants(jobPrefix, jobs);
         if (variants.length > 0) {
             // This workflow was called via a matrix job — emit one section per variant
             for (const variant of variants) {
                 output[`${name} (${variant})`] = {
-                    jobs: processJobs(rawJobs, withVariant(jobPrefix, variant), jobs, timingByName, nodeByJobPrefix),
+                    jobs: processJobs(rawJobs, withMatrixVariant(jobPrefix, variant), jobs, timingByName, nodeByJobPrefix),
                 };
             }
         }

@@ -87,6 +87,13 @@ const jobs = [
 
 const ciNode: WorkflowNode = { name: "CI", yaml: workflowYaml, jobPrefix: "" };
 
+// Mirrors GitHub's own truncation: a " / "-delimited job name segment longer
+// than 100 characters is cut to 97 characters followed by "...", which strips
+// the closing paren off a long matrix segment.
+function truncateSegment(segment: string): string {
+  return segment.length > 100 ? `${segment.slice(0, 97)}...` : segment;
+}
+
 describe("buildVisualiserYaml", () => {
   it("produces correct YAML with durations and needs", () => {
     const result = buildVisualiserYaml([ciNode], jobs);
@@ -223,6 +230,11 @@ jobs:
     const result = buildVisualiserYaml(
       [{ name: "CI", yaml: yamlWithStringNeeds, jobPrefix: "" }],
       [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:05Z",
+        },
         {
           name: "test",
           started_at: "2024-01-01T00:00:00Z",
@@ -374,6 +386,16 @@ jobs:
     const result = buildVisualiserYaml(
       [{ name: "CI", yaml: yamlMultiNeeds, jobPrefix: "" }],
       [
+        {
+          name: "build",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:05Z",
+        },
+        {
+          name: "lint",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:05Z",
+        },
         {
           name: "test",
           started_at: "2024-01-01T00:00:00Z",
@@ -967,6 +989,8 @@ jobs:
     const matrixMainYaml = `
 name: CI
 jobs:
+  build:
+    runs-on: ubuntu-latest
   deploy:
     needs: [build]
     strategy:
@@ -986,6 +1010,11 @@ jobs:
     ];
     const matrixJobs = [
       {
+        name: "build",
+        started_at: "2024-01-01T00:00:00Z",
+        completed_at: "2024-01-01T00:00:05Z",
+      },
+      {
         name: "deploy (staging) / deploy-step",
         started_at: "2024-01-01T00:00:00Z",
         completed_at: "2024-01-01T00:00:10Z",
@@ -1001,6 +1030,7 @@ jobs:
     expect(parsed).toEqual({
       ci: {
         jobs: {
+          build: { duration: 5 },
           "deploy (staging)": { uses: "deploy (staging)", needs: ["build"] },
           "deploy (prod)": { uses: "deploy (prod)", needs: ["build"] },
         },
@@ -1008,6 +1038,216 @@ jobs:
       "deploy (staging)": { jobs: { "deploy-step": { duration: 10 } } },
       "deploy (prod)": { jobs: { "deploy-step": { duration: 20 } } },
     });
+  });
+
+  it("expands a matrix reusable workflow whose name segment GitHub truncated", () => {
+    const mainYaml = `
+name: CI
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+  test-fargate-integration:
+    needs: [prepare]
+    strategy:
+      matrix:
+        include:
+          - name: auto-renewal-notifier
+          - name: notifications-dispatcher
+    uses: ./.github/workflows/dotnet-test.yml
+`;
+    const childYaml = `
+name: Dotnet test
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+`;
+    const params = (n: string) =>
+      `${n}, PS.ScheduledTasks.${n}.Fargate.Tests, PS/PS.ScheduledTasks.${n}.Fargate.Tests`;
+    const segment = (n: string) =>
+      truncateSegment(`test-fargate-integration (${params(n)})`);
+    const label = (n: string) =>
+      segment(n).slice("test-fargate-integration (".length);
+
+    // Both variants must actually overflow, or this asserts nothing.
+    expect(segment("auto-renewal-notifier")).toMatch(/\.\.\.$/);
+    expect(segment("notifications-dispatcher")).toMatch(/\.\.\.$/);
+
+    const result = buildVisualiserYaml(
+      [
+        { name: "ci", yaml: mainYaml, jobPrefix: "" },
+        {
+          name: "dotnet-test",
+          yaml: childYaml,
+          jobPrefix: "test-fargate-integration / ",
+        },
+      ],
+      [
+        {
+          name: "prepare",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:05Z",
+        },
+        {
+          name: `${segment("auto-renewal-notifier")} / shard`,
+          started_at: "2024-01-01T00:00:05Z",
+          completed_at: "2024-01-01T00:00:15Z",
+        },
+        {
+          name: `${segment("notifications-dispatcher")} / shard`,
+          started_at: "2024-01-01T00:00:05Z",
+          completed_at: "2024-01-01T00:00:25Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      ci: {
+        jobs: {
+          prepare: { duration: 5 },
+          [`test-fargate-integration (${label("auto-renewal-notifier")})`]: {
+            uses: `dotnet-test (${label("auto-renewal-notifier")})`,
+            needs: ["prepare"],
+          },
+          [`test-fargate-integration (${label("notifications-dispatcher")})`]: {
+            uses: `dotnet-test (${label("notifications-dispatcher")})`,
+            needs: ["prepare"],
+          },
+        },
+      },
+      [`dotnet-test (${label("auto-renewal-notifier")})`]: {
+        jobs: { shard: { duration: 10 } },
+      },
+      [`dotnet-test (${label("notifications-dispatcher")})`]: {
+        jobs: { shard: { duration: 20 } },
+      },
+    });
+  });
+});
+
+describe("needs resolution", () => {
+  it("fans a needs entry out to every matrix variant of that job", () => {
+    const matrixYaml = `
+name: CI
+jobs:
+  test:
+    strategy:
+      matrix:
+        node: [18, 20]
+    runs-on: ubuntu-latest
+  report:
+    needs: [test]
+    runs-on: ubuntu-latest
+`;
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: matrixYaml, jobPrefix: "" }],
+      [
+        {
+          name: "test (18)",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:30Z",
+        },
+        {
+          name: "test (20)",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:40Z",
+        },
+        {
+          name: "report",
+          started_at: "2024-01-01T00:00:40Z",
+          completed_at: "2024-01-01T00:00:45Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      CI: {
+        jobs: {
+          "test (18)": { duration: 30 },
+          "test (20)": { duration: 40 },
+          report: { duration: 5, needs: ["test (18)", "test (20)"] },
+        },
+      },
+    });
+  });
+
+  it("resolves a needs entry to the key emitted for a job with a name: field", () => {
+    const namedYaml = `
+name: CI
+jobs:
+  test-unit:
+    name: Unit tests (\${{ matrix.shard }})
+    strategy:
+      matrix:
+        shard: [Core, Net]
+    runs-on: ubuntu-latest
+  report:
+    needs: [test-unit]
+    runs-on: ubuntu-latest
+`;
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: namedYaml, jobPrefix: "" }],
+      [
+        {
+          name: "Unit tests (Core)",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:30Z",
+        },
+        {
+          name: "Unit tests (Net)",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:40Z",
+        },
+        {
+          name: "report",
+          started_at: "2024-01-01T00:00:40Z",
+          completed_at: "2024-01-01T00:00:45Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    expect(parsed).toEqual({
+      CI: {
+        jobs: {
+          "Unit tests (Core)": { duration: 30 },
+          "Unit tests (Net)": { duration: 40 },
+          report: {
+            duration: 5,
+            needs: ["Unit tests (Core)", "Unit tests (Net)"],
+          },
+        },
+      },
+    });
+  });
+
+  it("drops a needs entry naming a job that was not emitted", () => {
+    const result = buildVisualiserYaml(
+      [{ name: "CI", yaml: workflowYaml, jobPrefix: "" }],
+      [
+        {
+          name: "test",
+          started_at: "2024-01-01T00:00:00Z",
+          completed_at: "2024-01-01T00:00:10Z",
+        },
+      ],
+    );
+    const parsed = yaml.load(result) as Record<string, unknown>;
+    // build has no timing so it is excluded; test's needs would otherwise point
+    // at a key that does not exist, which makes the visualiser drop test.
+    expect(parsed).toEqual({ CI: { jobs: { test: { duration: 10 } } } });
+  });
+
+  it("emits no needs entry that does not name a sibling key", () => {
+    const result = buildVisualiserYaml([ciNode], jobs);
+    const parsed = yaml.load(result) as Record<
+      string,
+      { jobs: Record<string, { needs?: string[] }> }
+    >;
+    for (const workflow of Object.values(parsed)) {
+      const keys = new Set(Object.keys(workflow.jobs));
+      for (const job of Object.values(workflow.jobs)) {
+        for (const dep of job.needs ?? []) expect(keys).toContain(dep);
+      }
+    }
   });
 });
 
